@@ -1,0 +1,185 @@
+---
+title: "Inferring a species tree of the *Anolis distichus* species group with `SVDquartets`"
+author: "Tanner Myers"
+output:
+    html_document:
+        toc: TRUE
+---
+# Prepare SNP data for `SVDquartets`
+
+```{bash, eval=FALSE}
+# awk '{print $1".aligned.sorted_"$1".aligned.sorted", $0}' astral_names.txt > species_tree.txt 
+awk '{print $1}' species_tree.txt > keep.txt
+awk '{print $3}' species_tree.txt > rename.txt
+
+### subset VCF by samples for species tree inference & rename
+bcftools view -S keep.txt /scratch/tcm0036/distichus-ddRAD/brevirostris-project/bcftools/full_miss90_LD.vcf | \
+    bcftools reheader -s rename.txt | \
+    bcftools view -Oz -o /scratch/tcm0036/distichus-ddRAD/brevirostris-project/phylo/svd/speciestree_miss90LD.vcf.gz
+
+rm keep.txt
+rm rename.txt
+
+### convert to Nexus
+vcf2phylip.py -i /scratch/tcm0036/distichus-ddRAD/brevirostris-project/phylo/svd/speciestree_miss90LD.vcf.gz \
+    --output-folder /scratch/tcm0036/distichus-ddRAD/brevirostris-project/phylo/svd/ \
+    --output-prefix svd_miss90LD \
+    -m 1 -n
+
+cat taxonpartion.txt >> svd_miss90LD.min1.nexus 
+```
+
+## `TAXPARTITION` block to Nexus file
+
+        BEGIN SETS;
+        taxpartition distichus.species =
+                A.websteri     : 1-2,
+                A.marron  : 3-5,
+                A.caudalis  : 6-7,
+                A.brevirostris : 8-15,
+                A.d.Tiburon  : 16-19,
+                A.d.favillarum   : 20-23,
+                A.d.dominicensisWest : 24-27,
+                A.d.Bahamas  : 28-32,
+                A.d.dominicensisEast  : 33-36,
+                A.d.ignigularisWest   : 37-39,
+                A.d.ignigularisEast  : 40-42,
+                A.d.propsej  : 43-45,
+                A.d.ravitergum : 46-49;
+        END;
+
+## PAUP* control block 
+
+`svdquartets_run.nex`: 
+
+        BEGIN PAUP;
+                execute svd_miss90LD.min1.nexus;
+                
+                svdquartets partition=distichus.species evalQuartets=all bootstrap=standard nreps=1000 nthreads=auto treeFile=svd_bootstrap.trees;
+                
+                savetrees file=svdquartets_tree.tre format=newick root=no supportValues=nodeLabels;
+                
+                quit;
+        END;
+
+
+# Run `PAUP*`
+```{bash, eval=FALSE}
+conda activate phyloenv
+sbatch --job-name paup \
+        --partition jro0014_amd \
+        --cpus-per-task=8 \
+        --mem 80G \
+        --time 72:00:00 \
+        --wrap="paup4a168_centos64 -n svdquartets_run.nex > svdquartets.log"
+```
+
+# Summarize bootstrap trees
+```{bash, eval=FALSE}
+sumtrees --summary-target=mcct --support-as-labels --percentages --decimals=0 --force-unrooted --output-tree-filepath=svd_mcct.tre svd_bootstrap.trees
+```
+
+# Visualize the point estimate tree
+```{r fig.width=12, fig.height=12}
+library(ape)
+library(tidyverse)
+library(ggtree)
+library(treeio)
+
+tree <- read.tree("/Users/tannermyers/Dropbox/Distichus_Project/brevirostris-ms/phylo/svdquartets/svdquartets_tree.tre")
+plot.phylo(tree, cex = 1.2, show.node.label = TRUE)
+
+brev_grp <- c("A.brevirostris", "A.marron", "A.caudalis", "A.websteri")
+tree2 <- root(tree, outgroup = brev_grp, resolve.root = TRUE)
+plot.phylo(tree2, cex = 1.2)
+
+tip_colors <- setNames(c(
+        "#000000", # websteri
+        "#756CA3", # marron
+        "#93BBBD", # caudalis
+        "#202AC2", # brevirostris
+        "#DB8CA3", # Tiburon 
+        "#FFE684", # favillarum
+        "#B83B15", # west dom
+        "#7B3F8A", # Bahamas
+        "#2E4766", # east dom
+        "#28C3D1", # east ignigularis
+        "#30C7AB", # west ignigularis
+        "#BDA425", # properus
+        "#BBDB8B" # ravitergum
+        ),
+        c("A. websteri", "A. marron", "A. caudalis", "A. brevirostris",
+        "A. distichus - Tiburon", 'A. d. favillarum', "A. d. dominicensis - West",
+        "A. distichus - Bahamas", "A. d. dominicensis - East", "A. d. ignigularis - West",
+        "A. d. ignigularis - East", "A. d. properus/sejunctus", "A. d. ravitergum")
+)
+tree2$tip.label <- c("A. websteri", "A. marron", "A. caudalis", "A. brevirostris",
+        "A. distichus - Tiburon", 'A. d. favillarum', "A. d. dominicensis - West",
+        "A. distichus - Bahamas", "A. d. dominicensis - East", "A. d. ignigularis - West",
+        "A. d. ignigularis - East", "A. d. properus/sejunctus", "A. d. ravitergum")
+
+par(family = "Helvetica") 
+plot.phylo(tree2, cex = 1.8, label.offset = 0.2, show.node.label = TRUE)
+tiplabels(pch = 16, col = tip_colors)
+
+ggtree(tree2) + 
+        geom_tiplab(size = 6, offset = 0.2, family = "Helvetica", fontface = "italic") +
+        geom_nodelab(size = 4, hjust = -0.2) +  # Show node labels
+        geom_tippoint(aes(color = label), size = 5) +
+        scale_color_manual(values = tip_colors) +
+        theme(legend.position = "none",
+                axis.line.x = element_blank(),
+                axis.text.x = element_blank(),
+                axis.ticks.x = element_blank()) +
+        hexpand(.3)
+# ggsave("/Users/tannermyers/Dropbox/Distichus_Project/brevirostris-ms/figures/SVDquartets_species_tree.pdf",
+#     width = 12, height = 12, dpi = 300)
+```
+
+## Visualize the maximum clade credibility (MCC) tree
+```{r}
+mcc <- read.nexus("/Users/tannermyers/Dropbox/Distichus_Project/brevirostris-ms/phylo/svdquartets/svd_mcct.tre")
+plot.phylo(mcc)
+
+### sumtrees doesn't provide branch lengths so we'll just get rid of those
+### our focus is on the topology and % of bootstraps showing support
+mcc$edge.length <- NULL
+
+mcc2 <- root(mcc, outgroup = brev_grp, resolve.root = TRUE)
+
+tip_colors <- setNames(c(
+        "#000000", # websteri
+        "#202AC2", # brevirostris
+        "#756CA3", # marron
+        "#93BBBD", # caudalis
+        "#BBDB8B", # ravitergum
+        "#B83B15", # west dom
+        "#DB8CA3", # Tiburon 
+        "#FFE684", # favillarum
+        "#7B3F8A", # Bahamas
+        "#2E4766", # east dom
+        "#BDA425", # properus
+        "#30C7AB", # west ignigularis
+        "#28C3D1" # east ignigularis
+        ),
+        c("A. websteri", "A. brevirostris", "A. marron", "A. caudalis",
+        "A. d. ravitergum", "A. d. dominicensis - West", "A. distichus - Tiburon", 'A. d. favillarum',
+        "A. distichus - Bahamas", "A. d. dominicensis - East", "A. d. properus/sejunctus", "A. d. ignigularis - West", "A. d. ignigularis - East")
+)
+mcc2$tip.label <- c("A. websteri", "A. brevirostris", "A. marron", "A. caudalis",
+        "A. d. ravitergum", "A. d. dominicensis - West", "A. distichus - Tiburon", 'A. d. favillarum',
+        "A. distichus - Bahamas", "A. d. dominicensis - East", "A. d. properus/sejunctus", "A. d. ignigularis - West", "A. d. ignigularis - East")
+
+ggtree(mcc2) + 
+        geom_tiplab(size = 6, offset = 0.2, family = "Helvetica", fontface = "italic") +
+        geom_nodelab(size = 4, hjust = -0.2) +  # Show node labels
+        geom_tippoint(aes(color = label), size = 5) +
+        scale_color_manual(values = tip_colors) +
+        theme(legend.position = "none",
+                axis.line.x = element_blank(),
+                axis.text.x = element_blank(),
+                axis.ticks.x = element_blank()) +
+        hexpand(.3)
+ggsave("/Users/tannermyers/Dropbox/Distichus_Project/brevirostris-ms/figures/SVDquartets_mcc_tree.pdf",
+    width = 12, height = 12, dpi = 300)
+```
