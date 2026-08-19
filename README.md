@@ -8,6 +8,6 @@ This repository contains the code necessary to reproduce the results of &lt;>INS
 
 ## Phylogenetics
 
-Species tree inference with `SVDquartets` | [scripts/svdquartets.rmd](scripts/svdquartets.rmd) | [HTML](https://TannerMyers.github.io/bark-anole-evolution/svdquartets.html)
+| Species tree inference with `SVDquartets` | [scripts/svdquartets.rmd](scripts/svdquartets.rmd) | [HTML](https://TannerMyers.github.io/bark-anole-evolution/svdquartets.html) |
 
 ## Gene flow Analyses
