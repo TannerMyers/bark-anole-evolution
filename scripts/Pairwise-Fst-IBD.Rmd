@@ -1,0 +1,1151 @@
+---
+title: "*Anolis distichus* Species Group Genetic Differentiation (Fst)"
+author: "Tanner Myers"
+output:
+  rmdformats::html_clean:
+    highlight: kate
+---
+
+# Genome-wide π 
+
+## Run `Stacks`
+
+```{bash, eval = FALSE}
+#!/usr/bin/env bash
+#SBATCH --job-name=brev-stacks
+#SBATCH --nodes=1
+#SBATCH --ntasks-per-node=1
+#SBATCH --cpus-per-task=10
+#SBATCH --partition=bigmem4
+#SBATCH --mem=256gb
+#SBATCH --time=36:00:00
+#SBATCH --mail-user=tcm0036@auburn.edu
+#SBATCH --mail-type=FAIL,END
+#SBATCH --error=err.pi_%j
+#SBATCH --output=out.pi_%j
+
+# module load stacks/2.61
+source ~/mambaforge/etc/profile.d/conda.sh
+conda activate genomics_env
+
+POPMAP=/home/tcm0036/distichus-ddRAD/brevirostris-ms/scripts/bioinformatics/filtered-specimens_mig_clades.tsv
+CAT_DIR=/scratch/tcm0036/distichus-ddRAD/brevirostris-project/stacks/gstacks/
+OUT_DIR=/scratch/tcm0036/distichus-ddRAD/brevirostris-project/stacks/populations/popgen
+
+mkdir -p $OUT_DIR
+
+### Make popmap with individual names as population IDs and clades used for MSC-M analyses
+awk -F"\t" -v OFS="\t" '{print $2, $6}' /home/tcm0036/distichus-ddRAD/brevirostris-ms/sampling-master-detailed.tsv | tail -297 > $POPMAP
+
+### Run populations to estimate π for full sampling using specific subspecies assignments
+populations -P $CAT_DIR -M $POPMAP -O $OUT_DIR --fstats -t 10
+
+### Run populations to estimate π for full sampling using MSC-M clade assignments
+mkdir -p ${OUT_DIR}/mscM_clades
+awk -F"\t" -v OFS="\t" '
+    BEGIN {
+        replace["suppar"] = "tiburon"
+        replace["aurifier"] = "tiburon"
+        replace["dom3"] = "tiburon"
+        replace["vinosus"] = "tiburon"
+
+        replace["dom1"] = "west_dominicensis"
+        replace["dom4"] = "west_dominicensis"
+
+    }
+    $6 in replace {$6 = replace[$6]}
+    {print $2, $6}
+' /home/tcm0036/distichus-ddRAD/brevirostris-ms/sampling-master-detailed.tsv | \
+        tail -297 > $POPMAP
+
+populations -P $CAT_DIR -M $POPMAP -O ${OUT_DIR}/mscM_clades --fstats -t 10
+```
+
+```{r}
+library(tidyverse)
+
+pi_pops <- read_table("/Users/tannermyers/Dropbox/Distichus_Project/brevirostris-ms/bioinformatics/stacks/fstats_output/populations.sumstats_summary.tsv",
+                        col_names = FALSE, comment = "#", skip = 26)
+colnames(pi_pops) <- c("Pop_ID", "Private", "Sites", "Variant_Sites", "Polymorphic_Sites", "%Polymorphic_Loci",
+                    "Num_Indv", "Var", "StdErr", "P", "Var", "StdErr", "Obs_Het", "Var", "StdErr", "Obs_Hom",
+                    "Var", "StdErr", "Exp_Het", "Var", "StdErr", "Exp_Hom", "Var", "StdErr", "Pi", "Var",
+                    "StdErr", "Fis", "Var", "StdErr")
+pi_pops %>% select(Pop_ID, Pi)
+
+pi_clades <- read_table("/Users/tannermyers/Dropbox/Distichus_Project/brevirostris-ms/bioinformatics/stacks/fstats_output/mscM_clades/populations.sumstats_summary.tsv",
+                        col_names = FALSE, comment = "#", skip = 26) 
+
+colnames(pi_clades) <- c("Pop_ID", "Private", "Sites", "Variant_Sites", "Polymorphic_Sites", "%Polymorphic_Loci",
+                    "Num_Indv", "Var", "StdErr", "P", "Var", "StdErr", "Obs_Het", "Var", "StdErr", "Obs_Hom",
+                    "Var", "StdErr", "Exp_Het", "Var", "StdErr", "Exp_Hom", "Var", "StdErr", "Pi", "Var",
+                    "StdErr", "Fis", "Var", "StdErr")
+pi_clades %>% select(Pop_ID, Pi)
+```
+
+# Population Fst
+
+```{r, eval = FALSE}
+library(vcfR)
+library(adegenet)
+library(StAMPP)
+library(stringr)
+library(tidyverse)
+
+vcf <- read.vcfR("/scratch/tcm0036/distichus-ddRAD/brevirostris-project/bcftools/full_miss90_LD.vcf")
+gen <- vcfR2genlight(vcf)
+gen1 <- gen[indNames(gen) != "8304.pietro.aligned.sorted_8304.pietro.aligned.sorted"]
+
+specimens <- str_split(gen1@ind.names, "_", simplify = TRUE)
+specimens <- apply(specimens, 1, function(row){
+    if(row[1] == row[2]) {
+        return(row[1])
+    } else {
+        return(paste(row[1], row[2], sep = "_"))
+    }
+})
+gen1@ind.names <- specimens
+
+# pops <- read_table("~/distichus-ddRAD/brevirostris-ms/scripts/phylo/pops.tsv", col_names = FALSE)
+# pops <- pops[match(gen1@ind.names, pops$X1), ]
+# pops$X1 == gen1@ind.names
+
+# gen1@pop <- as.factor(pops$X2)
+# gen1
+
+# distichus_Fsts <- stamppFst(gen1, nboots = 100, nclusters = 4, percent = 95)
+# save(distichus_Fsts, file = "/scratch/tcm0036/distichus-ddRAD/brevirostris-project/snp-analyses/full_miss90LD_Fst.RData")
+
+### Do specific populations -- maximalist
+info = read_table("/home/tcm0036/distichus-ddRAD/brevirostris-ms/sampling-master-detailed.tsv", col_names = TRUE)
+pops <- as.data.frame(info[, c("specimen_path", "subspecies_post")])
+pops <- pops[match(gen1@ind.names, pops$specimen_path),]
+pops$specimen_path == gen1@ind.names
+gen1@pop <- as.factor(pops$subspecies_post)
+gen1
+
+distichus_pop_Fsts <- stamppFst(gen1, nboots = 100, nclusters = 4, percent = 95)
+save(distichus_pop_Fsts, file = "/scratch/tcm0036/distichus-ddRAD/brevirostris-project/snp-analyses/full_miss90LD_population_Fst.RData")
+### Do specific populations based on tree, lumping together Tiburon, etc.
+pops$clade <- pops$subspecies_post
+pops$clade[pops$clade %in% c("dom1", "dom4")] <- "west_dominicensis"
+pops$clade[pops$clade %in% c("dom3", "aurifer", "suppar", "vinosus")] <- "tiburon"
+
+gen1@pop <- as.factor(pops$clade)
+
+distichus_clade_Fsts <- stamppFst(gen1, nboots = 100, nclusters = 4, percent = 95)
+save(distichus_clade_Fsts, file = "/scratch/tcm0036/distichus-ddRAD/brevirostris-project/snp-analyses/full_miss90LD_clade_Fst.RData")
+```
+
+```{r, fig.width = 12, fig.height = 12}
+library(reshape2)
+library(ggnewscale)
+library(viridis)
+
+load("/Users/tannermyers/Dropbox/Distichus_Project/brevirostris-ms/snp-analyses/Fsts/full_miss90LD_Fst.RData")
+str(distichus_Fsts)
+
+mat <- distichus_Fsts$Fsts
+
+mat[upper.tri(mat)] <- t(mat)[upper.tri(mat)]
+### to plot only upper triangle
+### If you want both upper and lower triangles, omit
+mat[lower.tri(mat)] <- NA
+heatmap <- melt(mat)
+
+ggplot(data = heatmap, aes(x = Var1, y = Var2, fill = value)) + 
+    geom_tile(color = "white") +
+    geom_text(aes(label = round(value, 2), 
+        color = ifelse(value > 0.5, "black", "white"))) +
+    theme_bw() +
+    scale_fill_viridis_c(option = "viridis", na.value = "white", name = bquote(F[ST])) +
+        theme_minimal() +
+    scale_color_identity() +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        axis.title = element_blank(),
+        legend.position = "bottom")
+
+
+### for the figure, use more descriptive names
+new_order <- c("brevirostris", "caudalis", "marron", "websteri",
+            "aurifer", "dom3", "suppar", "vinosus", "favillarum", "dom1", "dom4", "ravitergum",
+            "ignigularis", "properus", "sejunctus", "dom2",
+            "biminiensis", "dapsilis", "distichoides", "distichus", "ocior"
+            )
+
+new_names <- c("A. brevirostris", "A. caudalis", "A. marron", "A. websteri",
+    "A. d. aurifer", "A. d. dominicensis - SW", "A. d. suppar", "A. d. vinosus",
+    "A. d. favillarum", "A. d. dominicensis - NW", "A. d. dominicensis - W", "A. d. ravitergum", 
+    "A. d. ignigularis", "A. d. properus", "A. d. sejunctus", "A. d. dominicensis - E",
+    "A. d. biminiensis", "A. d. dapsilis", "A. d. distichoides", "A. d. distichus", "A. d. ocior"
+)
+
+mat <- distichus_Fsts$Fsts
+mat[upper.tri(mat)] <- t(mat)[upper.tri(mat)]
+
+### Reorder FIRST, before setting lower triangle to NA
+mat <- mat[new_order, new_order]
+
+### NOW set lower triangle to NA
+mat[lower.tri(mat)] <- NA
+
+### Then rename
+rownames(mat) <- new_names
+colnames(mat) <- new_names
+
+### Then plot 
+### just Fst
+heatmap <- melt(mat)
+ggplot(data = heatmap, aes(x = Var1, y = Var2, fill = value)) + 
+    geom_tile(color = "white") +
+    geom_text(aes(label = round(value, 2), 
+        color = ifelse(value > 0.5, "black", "white"))) +
+    theme_bw() +
+    scale_fill_viridis_c(option = "viridis", na.value = "white", name = bquote(F[ST])) +
+    theme_minimal() +
+    scale_color_identity() +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1, face = "italic"),
+        axis.text.y = element_text(face = "italic"),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        axis.title = element_blank(),
+        legend.position = "bottom")
+ggsave("/Users/tannermyers/Dropbox/Apps/Overleaf/distichus_tree/supplemental/supp-figs/pair-fst.pdf", dpi = 320)
+```
+
+```{r, fig.width = 12, fig.height = 12}
+load("/Users/tannermyers/Dropbox/Distichus_Project/brevirostris-ms/snp-analyses/Fsts/full_miss90LD_population_Fst.RData")
+str(distichus_pop_Fsts)
+
+mat <- distichus_pop_Fsts$Fsts
+
+mat[upper.tri(mat)] <- t(mat)[upper.tri(mat)]
+### to plot only upper triangle
+### If you want both upper and lower triangles, omit
+mat[lower.tri(mat)] <- NA
+heatmap <- melt(mat)
+
+ggplot(data = heatmap, aes(x = Var1, y = Var2, fill = value)) + 
+    geom_tile(color = "white") +
+    geom_text(aes(label = round(value, 2), 
+        color = ifelse(value > 0.5, "black", "white"))) +
+    theme_bw() +
+    scale_fill_viridis_c(option = "viridis", na.value = "white", name = bquote(F[ST])) +
+        theme_minimal() +
+    scale_color_identity() +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        axis.title = element_blank(),
+        legend.position = "bottom")
+
+### for the figure, use more descriptive names
+new_order <- c("brevirostris", "deserticola", "wetmorei", "caudalis", "marron", "websteri",
+            "aurifer", "dom3", "suppar", "vinosus", "favillarum", "dom1", "dom4", "ravitergum",
+            "west_ignigularis", "east_ignigularis", "properus", "sejunctus", "dom2",
+            "biminiensis", "dapsilis", "distichoides", "distichus", "ocior"
+            )
+
+new_names <- c("A. b. brevirostris", "A. b. deserticola", "A. b. wetmorei", "A. caudalis", "A. marron", "A. websteri",
+    "A. d. aurifer", "A. d. dominicensis - SW", "A. d. suppar", "A. d. vinosus",
+    "A. d. favillarum", "A. d. dominicensis - NW", "A. d. dominicensis - W", "A. d. ravitergum", 
+    "A. d. ignigularis - W", "A. d. ignigularis - E", "A. d. properus", "A. d. sejunctus", "A. d. dominicensis - E",
+    "A. d. biminiensis", "A. d. dapsilis", "A. d. distichoides", "A. d. distichus", "A. d. ocior"
+)
+
+mat <- distichus_pop_Fsts$Fsts
+mat[upper.tri(mat)] <- t(mat)[upper.tri(mat)]
+
+### Reorder FIRST, before setting lower triangle to NA
+mat <- mat[new_order, new_order]
+
+### NOW set lower triangle to NA
+mat[lower.tri(mat)] <- NA
+
+### Then rename
+rownames(mat) <- new_names
+colnames(mat) <- new_names
+
+### Now add π as the diagonal
+pi_pops <- pi_pops[, c("Pop_ID", "Pi")] %>%
+        arrange(match(Pop_ID, new_order))
+pi_pops$Pop_ID <- new_names
+diag(mat) <- pi_pops$Pi
+
+heatmap <- melt(mat)
+heatmap$type <- ifelse(heatmap$Var1 == heatmap$Var2, "pi", "fst")
+
+### Then plot Fst and π together
+ggplot() +
+        geom_tile(data = subset(heatmap, type == "fst"), 
+                aes(x = Var1, y = Var2, fill = value), color = "white") +
+        geom_text(data = subset(heatmap, type == "fst"),
+                aes(x = Var1, y = Var2, label = round(value, 2),
+                    color = ifelse(value > 0.5, "black", "white"))) +
+        scale_fill_viridis_c(option = "viridis", na.value = "white", name = bquote(F[ST])) +
+        scale_color_identity() +
+    new_scale_fill() +
+        geom_tile(data = subset(heatmap, type == "pi"), 
+            aes(x = Var1, y = Var2, fill = value), color = "white") +
+        geom_text(data = subset(heatmap, type == "pi"),
+            aes(x = Var1, y = Var2, label = round(value*100, 2),
+                color = ifelse(value > 0.0025, "black", "white"))) +
+        scale_fill_viridis_c(option = "magma", name = bquote(pi)) +
+    theme_bw() +
+    theme_minimal() +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1, face = "italic"),
+        axis.text.y = element_text(face = "italic"),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        axis.title = element_blank(),
+        legend.position = "bottom")
+ggsave("/Users/tannermyers/Dropbox/Apps/Overleaf/distichus_tree/supplemental/supp-figs/population-pair-fst-pi.pdf", dpi = 320)
+```
+
+```{r, fig.width = 12, fig.height = 12}
+load("/Users/tannermyers/Dropbox/Distichus_Project/brevirostris-ms/snp-analyses/Fsts/full_miss90LD_clade_Fst.RData")
+str(distichus_clade_Fsts)
+
+mat <- distichus_clade_Fsts$Fsts
+
+mat[upper.tri(mat)] <- t(mat)[upper.tri(mat)]
+### to plot only upper triangle
+### If you want both upper and lower triangles, omit
+mat[lower.tri(mat)] <- NA
+heatmap <- melt(mat)
+
+ggplot(data = heatmap, aes(x = Var1, y = Var2, fill = value)) + 
+    geom_tile(color = "white") +
+    geom_text(aes(label = round(value, 2), 
+        color = ifelse(value > 0.5, "black", "white"))) +
+    theme_bw() +
+    scale_fill_viridis_c(option = "viridis", na.value = "white", name = bquote(F[ST])) +
+        theme_minimal() +
+    scale_color_identity() +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        axis.title = element_blank(),
+        legend.position = "bottom")
+
+### for the figure, use more descriptive names
+new_order <- c("brevirostris", "deserticola", "wetmorei", "caudalis", "marron", "websteri",
+            "tiburon", "favillarum", "west_dominicensis", "ravitergum",
+            "west_ignigularis", "east_ignigularis", "properus", "sejunctus", "dom2",
+            "biminiensis", "dapsilis", "distichoides", "distichus", "ocior"
+            )
+
+new_names <- c("A. b. brevirostris", "A. b. deserticola", "A. b. wetmorei", "A. caudalis", "A. marron", "A. websteri",
+    "Tiburon A. distichus",
+    "A. d. favillarum", "A. d. dominicensis - W", "A. d. ravitergum", 
+    "A. d. ignigularis - W", "A. d. ignigularis - E", "A. d. properus", "A. d. sejunctus", "A. d. dominicensis - E",
+    "A. d. biminiensis", "A. d. dapsilis", "A. d. distichoides", "A. d. distichus", "A. d. ocior"
+)
+
+mat <- distichus_clade_Fsts$Fsts
+mat[upper.tri(mat)] <- t(mat)[upper.tri(mat)]
+
+### Reorder FIRST, before setting lower triangle to NA
+mat <- mat[new_order, new_order]
+
+### NOW set lower triangle to NA
+mat[lower.tri(mat)] <- NA
+
+### Then rename
+rownames(mat) <- new_names
+colnames(mat) <- new_names
+
+### Now add π as the diagonal
+pi_clades <- pi_clades[, c("Pop_ID", "Pi")] %>%
+        arrange(match(Pop_ID, new_order))
+pi_clades$Pop_ID <- new_names
+diag(mat) <- pi_clades$Pi
+
+heatmap <- melt(mat)
+heatmap$type <- ifelse(heatmap$Var1 == heatmap$Var2, "pi", "fst")
+
+### Then plot Fst and π together
+ggplot() +
+        geom_tile(data = subset(heatmap, type == "fst"), 
+                aes(x = Var1, y = Var2, fill = value), color = "white") +
+        geom_text(data = subset(heatmap, type == "fst"),
+                aes(x = Var1, y = Var2, label = round(value, 2),
+                    color = ifelse(value > 0.5, "black", "white"))) +
+        scale_fill_viridis_c(option = "viridis", na.value = "white", name = bquote(F[ST])) +
+        scale_color_identity() +
+    new_scale_fill() +
+        geom_tile(data = subset(heatmap, type == "pi"), 
+            aes(x = Var1, y = Var2, fill = value), color = "white") +
+        geom_text(data = subset(heatmap, type == "pi"),
+            aes(x = Var1, y = Var2, label = round(value*100, 2),
+                color = ifelse(value > 0.0025, "black", "white"))) +
+        scale_fill_viridis_c(option = "magma", name = bquote(pi)) +
+    theme_bw() +
+    theme_minimal() +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1, face = "italic"),
+        axis.text.y = element_text(face = "italic"),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        axis.title = element_blank(),
+        legend.position = "bottom")
+ggsave("/Users/tannermyers/Dropbox/Apps/Overleaf/distichus_tree/supplemental/supp-figs/clade-pair-fst-pi.pdf", dpi = 320)
+```
+
+# Individual-based
+
+This approach is to evaluate IBD among populations by comparing individual genetic distances (Fst) with geographic distances. 
+This approach loads a VCF into R, converts it to an `adegenet` object, and converts that into the allele counts data format required by `BEDASSLE`.
+Another way may be to use a `.ped` file from `PLINK`, which also is formatted such that the columns are SNPs and rows are individuals, although there are two columns per SNP.
+
+## Estimate Fst 
+
+```{r, eval = FALSE}
+library(BEDASSLE)
+
+vcf <- read.vcfR("/scratch/tcm0036/distichus-ddRAD/brevirostris-project/bcftools/full_miss90_LD.vcf")
+gen <- vcfR2genind(vcf)
+gen <- gen[indNames(gen) != "8304.pietro.aligned.sorted_8304.pietro.aligned.sorted"]
+
+specimens <- str_split(indNames(gen), "_", simplify = TRUE)
+specimens <- apply(specimens, 1, function(row){
+    if(row[1] == row[2]) {
+        return(row[1])
+    } else {
+        return(paste(row[1], row[2], sep = "_"))
+    }
+})
+
+indNames(gen) <- specimens
+gen@pop <- as.factor(indNames(gen))
+
+tab <- gen@tab
+pops <- gen@pop
+
+cols <- seq(2, ncol(tab), by = 2)
+tab <- tab[, cols]
+
+all_cts <- aggregate(tab, by = list(pops), FUN = sum, na.rm = T)
+rownames(all_cts) <- all_cts[, 1]
+all_cts <- as.matrix(all_cts[, -1])
+
+sample_sizes <- matrix(2, nrow = nrow(all_cts), ncol = ncol(all_cts))
+
+ind_fst <- calculate.all.pairwise.Fst(all_cts, sample_sizes)
+ind_fst <- as.matrix(ind_fst)
+isSymmetric(indFst)
+
+colnames(ind_fst) <- row.names(all_cts)
+rownames(ind_fst) <- row.names(all_cts) 
+diag(ind_fst) <- NA
+
+save(ind_fst, file = "/scratch/tcm0036/distichus-ddRAD/brevirostris-project/snp-analyses/pairwise-individual-Fst.RData")
+```
+
+## Estimate geographic distances among sampling localities
+
+```{r}
+library(fossil)
+library(reshape2)
+
+### read in popmap
+popmap <- read_table("~/Dropbox/Distichus_Project/brevirostris-ms/sampling-master-detailed.tsv")
+
+### load pairwise individual Fsts
+load("/Users/tannermyers/Dropbox/Distichus_Project/brevirostris-ms/snp-analyses/Fsts/pairwise-individual-Fst.RData")
+popmap <- popmap %>% arrange(specimen_path, colnames(ind_fst))
+rownames(ind_fst) <- popmap$specimen
+colnames(ind_fst) <- popmap$specimen 
+
+geo <- earth.dist(as.matrix(popmap[, c("longitude", "latitude")]), dist = FALSE)
+colnames(geo) <- popmap$specimen
+rownames(geo) <- popmap$specimen
+diag(geo) <- NA
+geo[geo == 0] <- NA
+
+geo_vect <- melt(geo)
+gen_vect <- melt(ind_fst)
+### same specimen labels on both?
+table(geo_vect$Var1 == gen_vect$Var1 & geo_vect$Var2 == gen_vect$Var2)
+
+dists <- data.frame(sample1 = gen_vect$Var1, sample2 = gen_vect$Var2,
+                    Fst = gen_vect$value, Geog = geo_vect$value,
+                    Inv_Fst = (gen_vect$value/(1 - gen_vect$value)),
+                    log_Geog = log10(geo_vect$value))
+```
+
+## *A. d. properus* and East *A. d. ignigularis*
+
+```{r, fig.width = 12, fig.height = 8}
+library(grid)
+library(gridExtra)
+library(ggpubr)
+library(rnaturalearth)
+library(maps)
+
+world <- rnaturalearth::ne_countries(returnclass = "sf", scale = "large")
+
+pop1 <- popmap$specimen[popmap$population_post == "properus"]
+pop2 <- popmap$specimen[popmap$population_post == "east_ignigularis"]
+
+dist_df <- dists %>% filter((sample1 %in% pop1 | sample1 %in% pop2) & 
+                            (sample2 %in% pop1 | sample2 %in% pop2))
+
+dist_df$comp <- case_when((dist_df$sample1 %in% pop1 & dist_df$sample2 %in% pop2) |
+  (dist_df$sample1 %in% pop2 & dist_df$sample2 %in% pop1) ~ "intergroup",
+  (dist_df$sample1 %in% pop1 & dist_df$sample2 %in% pop1)  ~ "intra_properus",
+  (dist_df$sample1 %in% pop2 & dist_df$sample2 %in% pop2)  ~ "intra_east_ignigularis")
+
+### estimate correlation
+cor.test(x = dist_df$log_Geog, y = dist_df$Inv_Fst, method = "pearson")
+
+ibd <- ggplot(dist_df) +
+    geom_point(aes(x = log_Geog, y = Inv_Fst, fill = comp),
+    color = "gray20", size = 3, shape = 21, alpha = 0.8, stroke = 0.8) +
+    xlab("Geographic distance") + ylab(expression("Inverse" ~ F[ST])) +
+    guides(fill = "none") +
+    scale_fill_manual(values = c(
+        "intergroup" = "black",
+        "intra_properus" = "#BDA425",
+        "intra_east_ignigularis" = "#28C3D1")) +
+    theme_bw() +
+    theme(plot.margin = margin(t = 10, r = 0, b = 0, l = 5),
+        aspect.ratio = 0.7,
+        axis.title = element_text(size = 16),
+        axis.text = element_text(size = 12),
+        #plot.title = element_text(size = 12, hjust = 0, margin = margin(t = 10, r = 0, b = 0, l = 0)),
+        panel.border = element_rect(size = 0.75, colour = "gray20"),
+        axis.ticks = element_line(size = 0.75, color = "gray20"),
+        panel.grid = element_blank())
+ibd
+
+map <- ggplot() + geom_sf(data = world) +
+        coord_sf(xlim = c(-75, -68), ylim = c(16.5, 20.5), expand = FALSE) +
+        geom_point(data = popmap[popmap$specimen %in% c(pop1, pop2), ],
+                   aes(x = longitude, y = latitude, color = population_post), size = 3) +
+        scale_color_manual(values = c("#28C3D1", "#BDA425"),
+                labels = c("A. d. ignigularis -- E", "A. d. properus")) +
+        xlab("Longitude") + ylab("Latitude") +
+        labs(color = NULL) +
+        theme_classic() +
+        guides(color = guide_legend(label.theme = element_text(face = "italic"))) +
+        theme(legend.position = "bottom")
+map
+
+ign_prop <- grid.arrange(ibd, map, ncol = 2, widths = c(5, 5)) 
+```
+
+## East *A. d. ignigularis* and Eastern *A. d. dominicensis* 
+
+```{r, fig.width = 12, fig.height = 8}
+pop1 <- popmap$specimen[popmap$population_post == "dom2"]
+pop2 <- popmap$specimen[popmap$population_post == "east_ignigularis"]
+
+dist_df <- dists %>% filter((sample1 %in% pop1 | sample1 %in% pop2) & 
+                            (sample2 %in% pop1 | sample2 %in% pop2))
+
+dist_df$comp <- case_when((dist_df$sample1 %in% pop1 & dist_df$sample2 %in% pop2) |
+  (dist_df$sample1 %in% pop2 & dist_df$sample2 %in% pop1) ~ "intergroup",
+  (dist_df$sample1 %in% pop1 & dist_df$sample2 %in% pop1)  ~ "intra_dom2",
+  (dist_df$sample1 %in% pop2 & dist_df$sample2 %in% pop2)  ~ "intra_east_ignigularis")
+
+### estimate correlation
+cor.test(x = dist_df$log_Geog, y = dist_df$Inv_Fst, method = "pearson")
+
+ibd <- ggplot(dist_df) +
+    geom_point(aes(x = log_Geog, y = Inv_Fst, fill = comp),
+    color = "gray20", size = 3, shape = 21, alpha = 0.8, stroke = 0.8) +
+    xlab("Geographic distance") + ylab(expression("Inverse" ~ F[ST])) +
+    guides(fill = "none") +
+    scale_fill_manual(values = c(
+        "intergroup" = "black",
+        "intra_dom2" = "#2E4766",
+        "intra_east_ignigularis" = "#28C3D1")) +
+    theme_bw() +
+    theme(plot.margin = margin(t = 10, r = 0, b = 0, l = 5),
+        aspect.ratio = 0.7,
+        axis.title = element_text(size = 16),
+        axis.text = element_text(size = 12),
+        #plot.title = element_text(size = 12, hjust = 0, margin = margin(t = 10, r = 0, b = 0, l = 0)),
+        panel.border = element_rect(size = 0.75, colour = "gray20"),
+        axis.ticks = element_line(size = 0.75, color = "gray20"),
+        panel.grid = element_blank())
+ibd
+
+map <- ggplot() + geom_sf(data = world) +
+        coord_sf(xlim = c(-75, -68), ylim = c(16.5, 21.5), expand = FALSE) +
+        geom_point(data = popmap[popmap$specimen %in% c(pop1, pop2), ],
+                   aes(x = longitude, y = latitude, color = population_post), size = 3) +
+        scale_color_manual(values = c("#2E4766", "#28C3D1"),
+                labels = c("A. d. dominicensis -- E", "A. d. ignigularis -- E")) +
+        xlab("Longitude") + ylab("Latitude") +
+        labs(color = NULL) +
+        theme_classic() +
+        guides(color = guide_legend(label.theme = element_text(face = "italic"))) +
+        theme(legend.position = "bottom")
+
+ign_dom <- grid.arrange(ibd, map, ncol = 2, widths = c(5, 5)) 
+```
+
+## West *A. d. ignigularis* and *A. d. ravitergum* 
+
+```{r, fig.width = 12, fig.height = 8}
+pop1 <- popmap$specimen[popmap$population_post == "ravitergum"]
+pop2 <- popmap$specimen[popmap$population_post == "west_ignigularis"]
+
+dist_df <- dists %>% filter((sample1 %in% pop1 | sample1 %in% pop2) & 
+                            (sample2 %in% pop1 | sample2 %in% pop2))
+
+dist_df$comp <- case_when((dist_df$sample1 %in% pop1 & dist_df$sample2 %in% pop2) |
+  (dist_df$sample1 %in% pop2 & dist_df$sample2 %in% pop1) ~ "intergroup",
+  (dist_df$sample1 %in% pop1 & dist_df$sample2 %in% pop1)  ~ "intra_ravitergum",
+  (dist_df$sample1 %in% pop2 & dist_df$sample2 %in% pop2)  ~ "intra_west_ignigularis")
+
+### estimate correlation
+cor.test(x = dist_df$log_Geog, y = dist_df$Inv_Fst, method = "pearson")
+
+ibd <- ggplot(dist_df) +
+    geom_point(aes(x = log_Geog, y = Inv_Fst, fill = comp),
+    color = "gray20", size = 3, shape = 21, alpha = 0.8, stroke = 0.8) +
+    xlab("Geographic distance") + ylab(expression("Inverse" ~ F[ST])) +
+    guides(fill = "none") +
+    scale_fill_manual(values = c(
+        "intergroup" = "black",
+        "intra_ravitergum" = "#BBDB8B",
+        "intra_west_ignigularis" = "#30C7AB")) +
+    theme_bw() +
+    theme(plot.margin = margin(t = 10, r = 0, b = 0, l = 5),
+        aspect.ratio = 0.7,
+        axis.title = element_text(size = 16),
+        axis.text = element_text(size = 12),
+        #plot.title = element_text(size = 12, hjust = 0, margin = margin(t = 10, r = 0, b = 0, l = 0)),
+        panel.border = element_rect(size = 0.75, colour = "gray20"),
+        axis.ticks = element_line(size = 0.75, color = "gray20"),
+        panel.grid = element_blank())
+ibd
+
+map <- ggplot() + geom_sf(data = world) +
+        coord_sf(xlim = c(-75, -68), ylim = c(16.5, 20.5), expand = FALSE) +
+        geom_point(data = popmap[popmap$specimen %in% c(pop1, pop2), ],
+                   aes(x = longitude, y = latitude, color = population_post), size = 3) +
+        scale_color_manual(values = c("#BBDB8B", "#30C7AB"),
+                labels = c("A. d. ravitergum", "A. d. ignigularis -- W")) +
+        xlab("Longitude") + ylab("Latitude") +
+        labs(color = NULL) +
+        theme_classic() +
+        guides(color = guide_legend(label.theme = element_text(face = "italic"))) +
+        theme(legend.position = "bottom")
+map
+
+ign_rav <- grid.arrange(ibd, map, ncol = 2, widths = c(5, 5)) 
+```
+
+## West *A. d. ignigularis* and East *A. d. ignigularis* 
+
+```{r, fig.width = 12, fig.height = 8}
+pop1 <- popmap$specimen[popmap$population_post == "east_ignigularis"]
+pop2 <- popmap$specimen[popmap$population_post == "west_ignigularis"]
+
+dist_df <- dists %>% filter((sample1 %in% pop1 | sample1 %in% pop2) & 
+                            (sample2 %in% pop1 | sample2 %in% pop2))
+
+dist_df$comp <- case_when((dist_df$sample1 %in% pop1 & dist_df$sample2 %in% pop2) |
+  (dist_df$sample1 %in% pop2 & dist_df$sample2 %in% pop1) ~ "intergroup",
+  (dist_df$sample1 %in% pop1 & dist_df$sample2 %in% pop1)  ~ "intra_east_ignigularis",
+  (dist_df$sample1 %in% pop2 & dist_df$sample2 %in% pop2)  ~ "intra_west_ignigularis")
+
+### estimate correlation
+cor.test(x = dist_df$log_Geog, y = dist_df$Inv_Fst, method = "pearson")
+
+ibd <- ggplot(dist_df) +
+    geom_point(aes(x = log_Geog, y = Inv_Fst, fill = comp),
+    color = "gray20", size = 3, shape = 21, alpha = 0.8, stroke = 0.8) +
+    xlab("Geographic distance") + ylab(expression("Inverse" ~ F[ST])) +
+    guides(fill = "none") +
+    scale_fill_manual(values = c(
+        "intergroup" = "black",
+        "intra_east_ignigularis" = "#28C3D1",
+        "intra_west_ignigularis" = "#30C7AB")) +
+    theme_bw() +
+    theme(plot.margin = margin(t = 10, r = 0, b = 0, l = 5),
+        aspect.ratio = 0.7,
+        axis.title = element_text(size = 16),
+        axis.text = element_text(size = 12),
+        #plot.title = element_text(size = 12, hjust = 0, margin = margin(t = 10, r = 0, b = 0, l = 0)),
+        panel.border = element_rect(size = 0.75, colour = "gray20"),
+        axis.ticks = element_line(size = 0.75, color = "gray20"),
+        panel.grid = element_blank())
+ibd
+
+map <- ggplot() + geom_sf(data = world) +
+        coord_sf(xlim = c(-75, -68), ylim = c(16.5, 20.5), expand = FALSE) +
+        geom_point(data = popmap[popmap$specimen %in% c(pop1, pop2), ],
+                   aes(x = longitude, y = latitude, color = population_post), size = 3) +
+        scale_color_manual(values = c("#28C3D1", "#30C7AB"),
+                labels = c("A. d. ignigularis - E", "A. d. ignigularis - W")) +
+        xlab("Longitude") + ylab("Latitude") +
+        labs(color = NULL) +
+        theme_classic() +
+        guides(color = guide_legend(label.theme = element_text(face = "italic"))) +
+        theme(legend.position = "bottom")
+map
+
+ign_ew <- grid.arrange(ibd, map, ncol = 2, widths = c(5, 5)) 
+```
+
+## Eastern *A. d. dominicensis* and Western *A. d. dominicensis* 
+
+```{r, fig.width = 12, fig.height = 8}
+pop1 <- popmap$specimen[popmap$population_post %in% c("dom1", "dom4")]
+pop2 <- popmap$specimen[popmap$population_post == "dom2"]
+
+dist_df <- dists %>% filter((sample1 %in% pop1 | sample1 %in% pop2) & 
+                            (sample2 %in% pop1 | sample2 %in% pop2))
+
+dist_df$comp <- case_when((dist_df$sample1 %in% pop1 & dist_df$sample2 %in% pop2) |
+  (dist_df$sample1 %in% pop2 & dist_df$sample2 %in% pop1) ~ "intergroup",
+  (dist_df$sample1 %in% pop1 & dist_df$sample2 %in% pop1)  ~ "intra_west_dominicensis",
+  (dist_df$sample1 %in% pop2 & dist_df$sample2 %in% pop2)  ~ "intra_east_dominicensis")
+
+### estimate correlation
+cor.test(x = dist_df$log_Geog, y = dist_df$Inv_Fst, method = "pearson")
+
+ibd <- ggplot(dist_df) +
+    geom_point(aes(x = log_Geog, y = Inv_Fst, fill = comp),
+    color = "gray20", size = 3, shape = 21, alpha = 0.8, stroke = 0.8) +
+    xlab("Geographic distance") + ylab(expression("Inverse" ~ F[ST])) +
+    guides(fill = "none") +
+    scale_fill_manual(values = c(
+        "intergroup" = "black",
+        "intra_east_dominicensis" = "#2E4766",
+        "intra_west_dominicensis" = "#B83B15")) +
+    theme_bw() +
+    theme(plot.margin = margin(t = 10, r = 0, b = 0, l = 5),
+        aspect.ratio = 0.7,
+        axis.title = element_text(size = 16),
+        axis.text = element_text(size = 12),
+        #plot.title = element_text(size = 12, hjust = 0, margin = margin(t = 10, r = 0, b = 0, l = 0)),
+        panel.border = element_rect(size = 0.75, colour = "gray20"),
+        axis.ticks = element_line(size = 0.75, color = "gray20"),
+        panel.grid = element_blank())
+ibd
+popmap$display_group <- ifelse(popmap$population_post %in% c("dom1", "dom4"), "A. d. dominicensis - W",
+    ifelse(popmap$population_post == "dom2", "A. d. dominicensis - E", popmap$population_post))
+
+map <- ggplot() + geom_sf(data = world) +
+        coord_sf(xlim = c(-75, -68), ylim = c(16.5, 20.5), expand = FALSE) +
+        geom_point(data = popmap[popmap$specimen %in% c(pop1, pop2), ],
+                   aes(x = longitude, y = latitude, color = display_group), size = 3) +
+        scale_color_manual(values = c("#2E4766", "#B83B15"),
+                labels = c("A. d. dominicensis - E", "A. d. dominicensis - W")) +
+        xlab("Longitude") + ylab("Latitude") +
+        labs(color = NULL) +
+        theme_classic() +
+        guides(color = guide_legend(label.theme = element_text(face = "italic"))) +
+        theme(legend.position = "bottom")
+map
+
+dom_ew <- grid.arrange(ibd, map, ncol = 2, widths = c(5, 5)) 
+```
+
+## Western *A. d. dominicensis* and *A. d. ravitergum*
+
+```{r, fig.width = 12, fig.height = 8}
+pop1 <- popmap$specimen[popmap$population_post %in% c("dom1", "dom4")]
+pop2 <- popmap$specimen[popmap$population_post == "ravitergum"]
+
+dist_df <- dists %>% filter((sample1 %in% pop1 | sample1 %in% pop2) & 
+                            (sample2 %in% pop1 | sample2 %in% pop2))
+
+dist_df$comp <- case_when((dist_df$sample1 %in% pop1 & dist_df$sample2 %in% pop2) |
+  (dist_df$sample1 %in% pop2 & dist_df$sample2 %in% pop1) ~ "intergroup",
+  (dist_df$sample1 %in% pop1 & dist_df$sample2 %in% pop1)  ~ "intra_west_dominicensis",
+  (dist_df$sample1 %in% pop2 & dist_df$sample2 %in% pop2)  ~ "intra_ravitergum")
+
+### estimate correlation
+cor.test(x = dist_df$log_Geog, y = dist_df$Inv_Fst, method = "pearson")
+
+ibd <- ggplot(dist_df) +
+    geom_point(aes(x = log_Geog, y = Inv_Fst, fill = comp),
+    color = "gray20", size = 3, shape = 21, alpha = 0.8, stroke = 0.8) +
+    xlab("Geographic distance") + ylab(expression("Inverse" ~ F[ST])) +
+    guides(fill = "none") +
+    scale_fill_manual(values = c(
+        "intergroup" = "black",
+        "intra_west_dominicensis" = "#B83B15",
+        "intra_ravitergum" = "#BBDB8B")) +
+    theme_bw() +
+    theme(plot.margin = margin(t = 10, r = 0, b = 0, l = 5),
+        aspect.ratio = 0.7,
+        axis.title = element_text(size = 16),
+        axis.text = element_text(size = 12),
+        #plot.title = element_text(size = 12, hjust = 0, margin = margin(t = 10, r = 0, b = 0, l = 0)),
+        panel.border = element_rect(size = 0.75, colour = "gray20"),
+        axis.ticks = element_line(size = 0.75, color = "gray20"),
+        panel.grid = element_blank())
+ibd
+
+map <- ggplot() + geom_sf(data = world) +
+        coord_sf(xlim = c(-75, -68), ylim = c(16.5, 20.5), expand = FALSE) +
+        geom_point(data = popmap[popmap$specimen %in% c(pop1, pop2), ],
+                   aes(x = longitude, y = latitude, color = display_group), size = 3) +
+        scale_color_manual(values = c("#B83B15", "#BBDB8B"),
+                labels = c("A. d. dominicensis - W", "A. d. ravitergum")) +
+        xlab("Longitude") + ylab("Latitude") +
+        labs(color = NULL) +
+        theme_classic() +
+        guides(color = guide_legend(label.theme = element_text(face = "italic"))) +
+        theme(legend.position = "bottom")
+map
+
+dom_w_rav <- grid.arrange(ibd, map, ncol = 2, widths = c(5, 5)) 
+```
+
+## Western *A. d. dominicensis* and Tiburon subspecies 
+
+```{r, fig.width = 12, fig.height = 8}
+pop1 <- popmap$specimen[popmap$population_post %in% c("dom1", "dom4")]
+pop2 <- popmap$specimen[popmap$population_post %in% c("aurifer", "suppar", "vinosus", "dom3")]
+
+dist_df <- dists %>% filter((sample1 %in% pop1 | sample1 %in% pop2) & 
+                            (sample2 %in% pop1 | sample2 %in% pop2))
+
+dist_df$comp <- case_when((dist_df$sample1 %in% pop1 & dist_df$sample2 %in% pop2) |
+  (dist_df$sample1 %in% pop2 & dist_df$sample2 %in% pop1) ~ "intergroup",
+  (dist_df$sample1 %in% pop1 & dist_df$sample2 %in% pop1)  ~ "intra_west_dominicensis",
+  (dist_df$sample1 %in% pop2 & dist_df$sample2 %in% pop2)  ~ "intra_tiburon")
+
+### estimate correlation
+cor.test(x = dist_df$log_Geog, y = dist_df$Inv_Fst, method = "pearson")
+
+ibd <- ggplot(dist_df) +
+    geom_point(aes(x = log_Geog, y = Inv_Fst, fill = comp),
+    color = "gray20", size = 3, shape = 21, alpha = 0.8, stroke = 0.8) +
+    xlab("Geographic distance") + ylab(expression("Inverse" ~ F[ST])) +
+    guides(fill = "none") +
+    scale_fill_manual(values = c(
+        "intergroup" = "black",
+        "intra_tiburon" = "#DB8CA3",
+        "intra_west_dominicensis" = "#B83B15")) +
+    theme_bw() +
+    theme(plot.margin = margin(t = 10, r = 0, b = 0, l = 5),
+        aspect.ratio = 0.7,
+        axis.title = element_text(size = 16),
+        axis.text = element_text(size = 12),
+        #plot.title = element_text(size = 12, hjust = 0, margin = margin(t = 10, r = 0, b = 0, l = 0)),
+        panel.border = element_rect(size = 0.75, colour = "gray20"),
+        axis.ticks = element_line(size = 0.75, color = "gray20"),
+        panel.grid = element_blank())
+ibd
+
+popmap$display_group <- ifelse(popmap$population_post %in% c("dom3", "aurifer", "vinosus", "suppar"), "Tiburon subspecies",
+                        popmap$display_group)
+
+map <- ggplot() + geom_sf(data = world) +
+        coord_sf(xlim = c(-75, -68), ylim = c(16.5, 20.5), expand = FALSE) +
+        geom_point(data = popmap[popmap$specimen %in% c(pop1, pop2), ],
+                   aes(x = longitude, y = latitude, color = display_group), size = 3) +
+        scale_color_manual(values = c("#B83B15", "#DB8CA3"),
+                labels = c("A. d. dominicensis - W", "Tiburon subspecies")) +
+        xlab("Longitude") + ylab("Latitude") +
+        labs(color = NULL) +
+        theme_classic() +
+        guides(color = guide_legend(label.theme = element_text(face = "italic"))) +
+        theme(legend.position = "bottom")
+map
+
+dom_w_tib <- grid.arrange(ibd, map, ncol = 2, widths = c(5, 5)) 
+```
+
+## *A. b. deserticola* and *A. d. ravitergum*
+
+```{r, fig.width = 12, fig.height = 8}
+pop1 <- popmap$specimen[popmap$subspecies_post == "deserticola"]
+pop2 <- popmap$specimen[popmap$population_post == "ravitergum"]
+
+dist_df <- dists %>% filter((sample1 %in% pop1 | sample1 %in% pop2) & 
+                            (sample2 %in% pop1 | sample2 %in% pop2))
+
+dist_df$comp <- case_when((dist_df$sample1 %in% pop1 & dist_df$sample2 %in% pop2) |
+  (dist_df$sample1 %in% pop2 & dist_df$sample2 %in% pop1) ~ "intergroup",
+  (dist_df$sample1 %in% pop1 & dist_df$sample2 %in% pop1)  ~ "intra_brevirostris",
+  (dist_df$sample1 %in% pop2 & dist_df$sample2 %in% pop2)  ~ "intra_ravitergum")
+
+### estimate correlation
+cor.test(x = dist_df$log_Geog, y = dist_df$Inv_Fst, method = "pearson")
+
+ibd <- ggplot(dist_df) +
+    geom_point(aes(x = log_Geog, y = Inv_Fst, fill = comp, shape = comp),
+    color = "gray20", size = 3, alpha = 0.8, stroke = 0.8) +
+    xlab("Geographic distance") + ylab(expression("Inverse" ~ F[ST])) +
+    guides(fill = "none", shape = "none") +
+    scale_fill_manual(values = c(
+        "intergroup" = "black",
+        "intra_brevirostris" = "#202AC2",
+        "intra_ravitergum" = "#BBDB8B")) +
+    scale_shape_manual(values = c(
+        "intergroup" = 21,
+        "intra_brevirostris" = 24,
+        "intra_ravitergum" = 21)) +
+    theme_bw() +
+    theme(plot.margin = margin(t = 10, r = 0, b = 0, l = 5),
+        aspect.ratio = 0.7,
+        axis.title = element_text(size = 16),
+        axis.text = element_text(size = 12),
+        #plot.title = element_text(size = 12, hjust = 0, margin = margin(t = 10, r = 0, b = 0, l = 0)),
+        panel.border = element_rect(size = 0.75, colour = "gray20"),
+        axis.ticks = element_line(size = 0.75, color = "gray20"),
+        panel.grid = element_blank())
+ibd
+
+map <- ggplot() + geom_sf(data = world) +
+        coord_sf(xlim = c(-75, -68), ylim = c(16.5, 20.5), expand = FALSE) +
+        geom_point(data = popmap[popmap$specimen %in% c(pop1, pop2), ],
+                   aes(x = longitude, y = latitude, color = subspecies_post, shape = complex), size = 3) +
+        scale_color_manual(values = c("#202AC2", "#BBDB8B"),
+                labels = c("A. b. deserticola", "A. d. ravitergum")) +
+        scale_shape_manual(values = c("brevirostris" = 17, "distichus" = 16)) +
+        xlab("Longitude") + ylab("Latitude") +
+        labs(color = NULL) +
+        theme_classic() +
+        guides(color = guide_legend(label.theme = element_text(face = "italic")),
+                shape = guide_legend(label.theme = element_text(face = "italic"))) +
+        theme(legend.position = "bottom")
+map
+
+brev_rav <- grid.arrange(ibd, map, ncol = 2, widths = c(5, 5))  
+```
+
+## *A. b. deserticola* and *A. d. ignigularis*
+
+```{r, fig.width = 12, fig.height = 8}
+pop1 <- popmap$specimen[popmap$subspecies_post == "deserticola"]
+pop2 <- popmap$specimen[popmap$population_post == "west_ignigularis"]
+
+dist_df <- dists %>% filter((sample1 %in% pop1 | sample1 %in% pop2) & 
+                            (sample2 %in% pop1 | sample2 %in% pop2))
+
+dist_df$comp <- case_when((dist_df$sample1 %in% pop1 & dist_df$sample2 %in% pop2) |
+  (dist_df$sample1 %in% pop2 & dist_df$sample2 %in% pop1) ~ "intergroup",
+  (dist_df$sample1 %in% pop1 & dist_df$sample2 %in% pop1)  ~ "intra_brevirostris",
+  (dist_df$sample1 %in% pop2 & dist_df$sample2 %in% pop2)  ~ "intra_ignigularis")
+
+### estimate correlation
+cor.test(x = dist_df$log_Geog, y = dist_df$Inv_Fst, method = "pearson")
+
+ibd <- ggplot(dist_df) +
+    geom_point(aes(x = log_Geog, y = Inv_Fst, fill = comp, shape = comp),
+    color = "gray20", size = 3, alpha = 0.8, stroke = 0.8) +
+    xlab("Geographic distance") + ylab(expression("Inverse" ~ F[ST])) +
+    guides(fill = "none", shape = "none") +
+    scale_fill_manual(values = c(
+        "intergroup" = "black",
+        "intra_brevirostris" = "#202AC2",
+        "intra_ignigularis" = "#30C7AB")) +
+    scale_shape_manual(values = c(
+        "intergroup" = 21,
+        "intra_brevirostris" = 24,
+        "intra_ravitergum" = 21)) +
+    theme_bw() +
+    theme(plot.margin = margin(t = 10, r = 0, b = 0, l = 5),
+        aspect.ratio = 0.7,
+        axis.title = element_text(size = 16),
+        axis.text = element_text(size = 12),
+        #plot.title = element_text(size = 12, hjust = 0, margin = margin(t = 10, r = 0, b = 0, l = 0)),
+        panel.border = element_rect(size = 0.75, colour = "gray20"),
+        axis.ticks = element_line(size = 0.75, color = "gray20"),
+        panel.grid = element_blank())
+ibd
+
+map <- ggplot() + geom_sf(data = world) +
+        coord_sf(xlim = c(-75, -68), ylim = c(16.5, 20.5), expand = FALSE) +
+        geom_point(data = popmap[popmap$specimen %in% c(pop1, pop2), ],
+                   aes(x = longitude, y = latitude, color = subspecies_post, shape = complex), size = 3) +
+        scale_color_manual(values = c("#202AC2", "#30C7AB"),
+                labels = c("A. b. deserticola", "A. d. ignigularis - W")) +
+        scale_shape_manual(values = c("brevirostris" = 17, "distichus" = 16)) +
+        xlab("Longitude") + ylab("Latitude") +
+        labs(color = NULL) +
+        theme_classic() +
+        guides(color = guide_legend(label.theme = element_text(face = "italic")),
+                shape = guide_legend(label.theme = element_text(face = "italic"))) +
+        theme(legend.position = "bottom")
+map
+
+brev_ign <- grid.arrange(ibd, map, ncol = 2, widths = c(5, 5))  
+```
+
+## *A. b. wetmorei* and *A. d. favillarum*
+
+```{r, fig.width = 12, fig.height = 8}
+pop1 <- popmap$specimen[popmap$subspecies_post == "wetmorei"]
+pop2 <- popmap$specimen[popmap$population_post == "favillarum"]
+
+dist_df <- dists %>% filter((sample1 %in% pop1 | sample1 %in% pop2) & 
+                            (sample2 %in% pop1 | sample2 %in% pop2))
+
+dist_df$comp <- case_when((dist_df$sample1 %in% pop1 & dist_df$sample2 %in% pop2) |
+  (dist_df$sample1 %in% pop2 & dist_df$sample2 %in% pop1) ~ "intergroup",
+  (dist_df$sample1 %in% pop1 & dist_df$sample2 %in% pop1)  ~ "intra_brevirostris",
+  (dist_df$sample1 %in% pop2 & dist_df$sample2 %in% pop2)  ~ "intra_favillarum")
+
+### estimate correlation
+cor.test(x = dist_df$log_Geog, y = dist_df$Inv_Fst, method = "pearson")
+
+ibd <- ggplot(dist_df) +
+    geom_point(aes(x = log_Geog, y = Inv_Fst, fill = comp, shape = comp),
+    color = "gray20", size = 3, alpha = 0.8, stroke = 0.8) +
+    xlab("Geographic distance") + ylab(expression("Inverse" ~ F[ST])) +
+    guides(fill = "none", shape = "none") +
+    scale_fill_manual(values = c(
+        "intergroup" = "black",
+        "intra_brevirostris" = "#202AC2",
+        "intra_favillarum" = "#FFE684")) +
+    scale_shape_manual(values = c(
+        "intergroup" = 21,
+        "intra_brevirostris" = 24,
+        "intra_favillarum" = 21)) +
+    theme_bw() +
+    theme(plot.margin = margin(t = 10, r = 0, b = 0, l = 5),
+        aspect.ratio = 0.7,
+        axis.title = element_text(size = 16),
+        axis.text = element_text(size = 12),
+        #plot.title = element_text(size = 12, hjust = 0, margin = margin(t = 10, r = 0, b = 0, l = 0)),
+        panel.border = element_rect(size = 0.75, colour = "gray20"),
+        axis.ticks = element_line(size = 0.75, color = "gray20"),
+        panel.grid = element_blank())
+ibd
+
+map <- ggplot() + geom_sf(data = world) +
+        coord_sf(xlim = c(-75, -68), ylim = c(16.5, 20.5), expand = FALSE) +
+        geom_point(data = popmap[popmap$specimen %in% c(pop1, pop2), ],
+                   aes(x = longitude, y = latitude, color = subspecies_post, shape = complex), size = 3) +
+        scale_color_manual(values = c("#FFE684", "#202AC2"),
+                labels = c("A. b. deserticola", "A. d. favillarum")) +
+        scale_shape_manual(values = c("brevirostris" = 17, "distichus" = 15)) +
+        xlab("Longitude") + ylab("Latitude") +
+        labs(color = NULL) +
+        theme_classic() +
+        guides(color = guide_legend(label.theme = element_text(face = "italic")),
+                shape = guide_legend(label.theme = element_text(face = "italic"))) +
+        theme(legend.position = "bottom")
+map
+
+brev_fav <- grid.arrange(ibd, map, ncol = 2, widths = c(5, 5))  
+```
+
+## *A. b. deserticola* and *A. b. wetmorei*
+
+```{r, fig.width = 12, fig.height = 8}
+pop1 <- popmap$specimen[popmap$subspecies_post == "wetmorei"]
+pop2 <- popmap$specimen[popmap$subspecies_post == "deserticola"]
+
+dist_df <- dists %>% filter((sample1 %in% pop1 | sample1 %in% pop2) & 
+                            (sample2 %in% pop1 | sample2 %in% pop2))
+
+dist_df$comp <- case_when((dist_df$sample1 %in% pop1 & dist_df$sample2 %in% pop2) |
+  (dist_df$sample1 %in% pop2 & dist_df$sample2 %in% pop1) ~ "intergroup",
+  (dist_df$sample1 %in% pop1 & dist_df$sample2 %in% pop1)  ~ "intra_wetmorei",
+  (dist_df$sample1 %in% pop2 & dist_df$sample2 %in% pop2)  ~ "intra_deserticola")
+
+### estimate correlation
+cor.test(x = dist_df$log_Geog, y = dist_df$Inv_Fst, method = "pearson")
+
+ibd <- ggplot(dist_df) +
+    geom_point(aes(x = log_Geog, y = Inv_Fst, fill = comp, shape = comp),
+    color = "gray20", size = 3, alpha = 0.8, stroke = 0.8) +
+    xlab("Geographic distance") + ylab(expression("Inverse" ~ F[ST])) +
+    guides(fill = "none", shape = "none") +
+    scale_fill_manual(values = c(
+        "intergroup" = "black",
+        "intra_wetmorei" = "#2A37FF",
+        "intra_deserticola" = "#0D1252")) +
+    scale_shape_manual(values = c(
+        "intergroup" = 21,
+        "intra_wetmorei" = 24,
+        "intra_deserticola" = 24
+    )) +
+    theme_bw() +
+    theme(plot.margin = margin(t = 10, r = 0, b = 0, l = 5),
+        aspect.ratio = 0.7,
+        axis.title = element_text(size = 16),
+        axis.text = element_text(size = 12),
+        #plot.title = element_text(size = 12, hjust = 0, margin = margin(t = 10, r = 0, b = 0, l = 0)),
+        panel.border = element_rect(size = 0.75, colour = "gray20"),
+        axis.ticks = element_line(size = 0.75, color = "gray20"),
+        panel.grid = element_blank())
+ibd
+
+map <- ggplot() + geom_sf(data = world) +
+        coord_sf(xlim = c(-75, -68), ylim = c(16.5, 20.5), expand = FALSE) +
+        geom_point(data = popmap[popmap$specimen %in% c(pop1, pop2), ],
+                   aes(x = longitude, y = latitude, color = subspecies_post, shape = complex), size = 3) +
+        scale_color_manual(values = c("#0D1252", "#2A37FF"),
+                labels = c("A. b. deserticola", "A. b. wetmorei")) +
+        scale_shape_manual(values = c("brevirostris" = 17)) +
+        xlab("Longitude") + ylab("Latitude") +
+        labs(color = NULL) +
+        theme_classic() +
+        guides(color = guide_legend(label.theme = element_text(face = "italic")),
+                shape = "none") +
+        theme(legend.position = "bottom")
+map
+
+dest_wet <- grid.arrange(ibd, map, ncol = 2, widths = c(5, 5))  
+```
+
+# Make figure(s)
+
+```{r, fig.height = 11, fig.width = 8}
+fsts <- grid.arrange(ign_prop, ign_rav, brev_rav, ncol = 1,
+            padding = unit(0, "line"))
+ggsave(plot = fsts,
+    filename = "/Users/tannermyers/Dropbox/Apps/Overleaf/distichus_tree/figures/fig-components/fst_ibd.png",
+    dpi = 300,
+    width = 12,
+    height = 12)
+```
+
+## *A. d. ignigularis* comparisons
+
+```{r, fig.height = 11, fig.width = 8}
+fsts <- grid.arrange(ign_ew, ign_prop, ign_dom, ign_rav, ncol = 1,
+            padding = unit(0, "line"))
+
+ggsave(plot = fsts,
+    filename = "/Users/tannermyers/Dropbox/Apps/Overleaf/distichus_tree/supplemental/supp-figs/ignigularis_fst_ibd.png",
+    dpi = 300,
+    width = 12,
+    height = 12)
+```
+
+## *A. d. dominicensis* comparisons
+```{r, fig.height = 11, fig.width = 8}
+fsts <- grid.arrange(dom_ew, ign_dom, dom_w_tib, dom_w_rav, ncol = 1,
+            padding = unit(0, "line"))
+
+ggsave(plot = fsts,
+    filename = "/Users/tannermyers/Dropbox/Apps/Overleaf/distichus_tree/supplemental/supp-figs/dominicensis_fst_ibd.png",
+    dpi = 300,
+    width = 12,
+    height = 12)
+```
+
+
+## *A. brevirostris* comparisons
+```{r, fig.height = 11, fig.width = 8}
+fsts <- grid.arrange(dest_wet, brev_fav, brev_rav, brev_ign, ncol = 1,
+            padding = unit(0, "line"))
+
+ggsave(plot = fsts,
+    filename = "/Users/tannermyers/Dropbox/Apps/Overleaf/distichus_tree/supplemental/supp-figs/brevirostris_fst_ibd.png",
+    dpi = 300,
+    width = 12,
+    height = 12)
+```
+
+
+# Packages 
+```{r}
+sessionInfo()
+```
