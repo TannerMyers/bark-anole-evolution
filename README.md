@@ -8,6 +8,9 @@ This repository contains the code necessary to reproduce the results of &lt;>INS
 
 | Population differentiation (F<sub>ST</sub>) & diversity (π) estimation and IBD analysis  | [scripts/Pairwise-Fst-IBD.Rmd](scripts/Pairwise-Fst-IBD.Rmd) | [HTML](https://TannerMyers.github.io/bark-anole-evolution/Pairwise-Fst-IBD.html) |
 
+| Allele-sharing patterns with `Dsuite`  | [scripts/Dsuite.Rmd](scripts/Dsuite.Rmd) | [HTML](https://TannerMyers.github.io/bark-anole-evolution/Dsuite.html) |
+
+
 ## Phylogenetics
 
 | Species tree inference with `SVDquartets` | [scripts/svdquartets.rmd](scripts/svdquartets.rmd) | [HTML](https://TannerMyers.github.io/bark-anole-evolution/svdquartets.html) |

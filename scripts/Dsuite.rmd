@@ -1,0 +1,301 @@
+---
+title: "Testing for gene flow across *Anolis distichus* Species Group with `Dsuite`"
+author: "Tanner Myers"
+output:
+  rmdformats::html_clean:
+    highlight: kate
+---
+
+# Just within *A. distichus*
+
+```{bash, eval = FALSE}
+#! /usr/bin/env bash
+
+module load gcc/5.3.0
+source ~/mambaforge/etc/profile.d/conda.sh # Or path to where your conda is
+conda activate genomics_env
+
+VCF=/scratch/tcm0036/distichus-ddRAD/brevirostris-project/bcftools/full_miss90_LD.vcf
+NEW_VCF=/scratch/tcm0036/distichus-ddRAD/brevirostris-project/geneflow/dsuite/full_miss90_LD.vcf
+SETS=/home/tcm0036/distichus-ddRAD/brevirostris-ms/scripts/snp-analyses/SETS.txt
+TREE=/scratch/tcm0036/distichus-ddRAD/brevirostris-project/geneflow/dsuite/PoMo_species_tree.nwk
+
+### Change PLINK sample names 
+# bcftools reheader --samples /home/tcm0036/distichus-ddRAD/brevirostris-ms/scripts/snp-analyses/VCF_samples.txt $VCF -o $NEW_VCF 
+
+/home/tcm0036/Dsuite/Build/Dsuite Dtrios --tree $TREE $NEW_VCF $SETS
+
+/home/tcm0036/Dsuite/Build/Dsuite Fbranch PoMo_species_tree.nwk SETS_tree.txt > fbranch_matrix.txt
+/home/tcm0036/Dsuite/Build/Dsuite Fbranch PoMo_species_tree.nwk SETS_tree.txt -Z > fbranch_Z_matrix.txt
+/home/tcm0036/Dsuite/Build/Dsuite Fbranch PoMo_species_tree.nwk SETS_tree.txt --Pb-matrix > fbranch_P_matrix.txt
+
+dtools.py fbranch_matrix.txt PoMo_species_tree.nwk 
+```
+
+```{r, echo=FALSE}
+knitr::include_graphics("/Users/tannermyers/Dropbox/Distichus_Project/brevirostris-ms/snp-analyses/Dsuite/brevirostris-outgroup/fbranch.png")
+```
+
+# Whole *A. distichus* species group
+
+## Download genome sequences for outgroup *Ctenonotus* species
+```{bash, eval = FALSE}
+#!/usr/bin/env bash
+#SBATCH --job-name=SRAdownload
+#SBATCH --mail-type=FAIL,END
+#SBATCH --mail-user=tcm0036@auburn.edu
+#SBATCH --time=6:00:00
+#SBATCH --mem 32G
+#SBATCH --partition jro0014_amd
+#SBATCH --output=SRAtoolkit_%j.out
+#SBATCH --error=SRAtoolkit_%j.err
+
+### load conda environment with SRA-toolkit
+source ~/mambaforge/etc/profile.d/conda.sh
+conda activate genomics_env
+
+### move to directory with WGS data
+OUT=/scratch/tcm0036/distichus-ddRAD/brevirostris-project/outgroup
+
+if [ ! -d "$OUT" ]; then
+
+        echo "$OUT does not exist; making directory to download files"
+        mkdir -p $OUT
+
+fi
+
+cd $OUT
+
+runs=(SRR4238387 SRR24030173)
+
+for run in "${runs[@]}"; do
+    echo "Processing $run..."
+
+    # Step 1: Download using prefetch and fasterq-dump
+    prefetch $run  # Downloads the SRA file to a directory named by the run ID
+    fasterq-dump $run  # Converts the SRA file to paired-end fastq files
+
+    # Step 2: Compress the fastq files using bgzip
+    if [[ -f ${run}_1.fastq ]]; then
+        bgzip ${run}_1.fastq
+        rm ${run}_1.fastq  # Remove uncompressed file after compression
+    fi
+
+    if [[ -f ${run}_2.fastq ]]; then
+        bgzip ${run}_2.fastq
+        rm ${run}_2.fastq  # Remove uncompressed file after compression
+    fi
+
+    # Step 3: Delete the prefetch directory (the SRA download directory)
+     if [[ -d $run ]]; then
+        rm -rf $run  # Removes the directory created by prefetch
+    fi
+  
+    echo "Finished processing $run."
+done
+```
+
+## Align outgroup sequences to *A. distichus* v1 reference with `BWA MEM`
+```{bash, eval = FALSE}
+#!/bin/bash
+#SBATCH --job-name=Anodist_aln
+#SBATCH --array=1-2
+#SBATCH --mem=65G
+#SBATCH --cpus-per-task=16
+#SBATCH --time=1-12:00:00
+#SBATCH --partition=nova_28
+
+# Load modules
+module load bwa/0.7.17
+module load samtools/1.15
+
+## Define vars
+SAMPLES=( SRR24030173 SRR4238387 )
+SAMPLE=${SAMPLES[$((SLURM_ARRAY_TASK_ID - 1))]}
+echo $SAMPLE
+
+READ_DIR=/scratch/tcm0036/distichus-ddRAD/brevirostris-project/outgroup
+REF=/home/tcm0036/distichus-ddRAD/genome/Anolis_distichus/AnoDis1.0.fasta.gz
+FQ1=$(find ${READ_DIR} -type f -name "${SAMPLE}*1.f*q.gz" -not -name "*.rem.*")
+FQ2=$(find ${READ_DIR} -type f -name "${SAMPLE}*2.f*q.gz" -not -name "*.rem.*")
+SAM=/scratch/tcm0036/distichus-ddRAD/alignments/AnoDist/sam/${SAMPLE}.aligned.sam
+BAM=/scratch/tcm0036/distichus-ddRAD/alignments/AnoDist/bam/outgroup/${SAMPLE}.aligned.bam
+SORTED=/scratch/tcm0036/distichus-ddRAD/alignments/AnoDist/bam/outgroup/${SAMPLE}.aligned.sorted.bam
+
+echo $FQ1
+echo $FQ2
+
+## Align reads
+bwa mem -t 8 $REF $FQ1 $FQ2 |\
+samtools view -b > $BAM
+
+## Sort & index
+samtools sort -o $SORTED $BAM
+samtools index $SORTED
+```
+
+## Use `Stacks` to call variants and generate a VCF for the outgroup species
+```{bash, eval = FALSE}
+#!/usr/bin/env bash
+#SBATCH --job-name=brev-stacks
+#SBATCH --nodes=1
+#SBATCH --ntasks-per-node=1
+#SBATCH --cpus-per-task=10
+#SBATCH --partition=jro0014_amd
+#SBATCH --mem=82gb
+#SBATCH --time=48:00:00
+#SBATCH --mail-user=tcm0036@auburn.edu
+#SBATCH --mail-type=FAIL,END
+#SBATCH --error=err.pops_%j
+#SBATCH --output=out.pops_%j
+
+# module load stacks/2.61
+source ~/mambaforge/etc/profile.d/conda.sh
+conda activate genomics_env
+
+BAM_DIR=/scratch/tcm0036/distichus-ddRAD/alignments/AnoDist/bam/
+POPMAP=/home/tcm0036/distichus-ddRAD/brevirostris-ms/brevirostris-project-master-popmap.tsv
+CAT_DIR=/scratch/tcm0036/distichus-ddRAD/brevirostris-project/stacks/gstacks/with-outgroup
+OUT_DIR=/scratch/tcm0036/distichus-ddRAD/brevirostris-project/stacks/populations/with-outgroup
+
+## Make popmap with individual names as population IDs, A. pulchellus as outgroup
+awk -F"\t" -v OFS="\t" '{print $2, $3}' $POPMAP | grep -v "cristatellus" > tmp.tsv
+
+# Run `gstacks` to assemble a catalog of RAD loci
+## -I specifies input file directory, in this case sorted .BAM files from BWA MEM and samtools
+## -M specifies the population map
+## -O specifies the output directory
+gstacks -I $BAM_DIR -M tmp.tsv -t 10 -O $CAT_DIR
+
+## Run populations to generate an unfiltered VCF for SNP-specific analyses
+## When running with only distichoids, haplotypes were exported and no other filtering
+## arguments were provided, but given that the outgroups are whole genome sequences,
+## I specify `--no-hap-exports` to prevent export of haplotypes, and these filters:
+## -p 2: a locus must be present in at least 2 populations to be retained
+## -r 0.2: a locus must be present in at least 20% of individuals in a population to be processed
+populations -P $CAT_DIR -M tmp.tsv --vcf --no-hap-exports -p 2 -r 0.2 -t 4 -O $OUT_DIR
+
+echo "Compressing output files..."
+bgzip -f ${OUT_DIR}/populations.snps.vcf
+```
+
+This gives us ~2.6 million SNPs on 168K ddRAD loci.
+
+## Filter VCF for `DSuite`
+```{bash, eval = FALSE}
+#! /usr/bin/env bash
+#SBATCH --mail-type=FAIL,END
+#SBATCH --mail-user=tcm0036@auburn.edu
+#SBATCH --partition=jro0014_amd
+#SBATCH --mem=32G
+#SBATCH --error=snpfilt_%j.err
+#SBATCH --output=snpfilt_%j.out
+#SBATCH --time=24:00:00
+#SBATCH --job-name=SNPFilter
+
+## Load conda env with bcftools
+source ~/mambaforge/etc/profile.d/conda.sh
+conda activate genomics_env
+
+VCF=/scratch/tcm0036/distichus-ddRAD/brevirostris-project/stacks/populations/with-outgroup/populations.snps.vcf.gz
+OUT_VCF=/scratch/tcm0036/distichus-ddRAD/brevirostris-project/geneflow/dsuite/pulchellus-outgroup/filtered_outgroup_miss90.vcf.gz
+
+awk '{print $2}' ~/distichus-ddRAD/brevirostris-ms/sampling-master-detailed.tsv | grep -v 'specimen_path' > keepers.txt
+echo "SRR24030173.aligned.sorted" >> keepers.txt
+
+bcftools view -S keepers.txt $VCF | \
+      bcftools filter -i 'FORMAT/DP > 5' | \
+      bcftools filter -e 'F_MISSING > 0.9' | \
+      bcftools view -m2 -M2 -v snps |\
+      bcftools sort -O z -o $OUT_VCF
+bcftools index $OUT_VCF
+```
+
+So I don't have to go back and re-run phylogeny inference with the *A. pulchellus* outgroup added, I will change the Newick tree file from `IQ-TREE` to designate an outgroup:
+```
+(aurifer:0.0980837374,((((((((biminiensis:0.0233515716,distichoides:0.0105391848)100/100:0.1262239141,(dapsilis:0.0903865529,distichus:0.0557311505)79.7/98:0.0000101037)100/100:0.0408845412,ocior:0.1027957373)100/100:0.7191316355,((((((brevirostris:0.3819707077,(caudalis:0.2098529618,marron:0.2726176600)100/100:0.3747486655)100/100:0.1445970914,websteri:0.6347060224)100/100:0.3612517893,ravitergum:0.5050476492)100/100:0.1000053540,west_ignigularis:0.2162089580)100/100:0.0343450597,(east_ignigularis:0.1103674671,(properus:0.0451861515,sejunctus:0.3951888484)100/100:0.1650717678)100/100:0.1149243153)100/100:0.0666388807,dom2:0.2363244078)100/100:0.1315007243)100/100:0.2489288624,(dom4:0.1818112068,dom1:0.2291402602)100/100:0.0784511888)100/100:0.1411129425,favillarum:0.3881855201)100/100:0.0858318629,dom3:0.1759631309)100/100:0.1521620622,vinosus:0.1094541089)100/100:0.0262677290,suppar:0.1487910958);
+```
+
+```{r, eval=FALSE}
+library(ape)
+library(phytools)
+
+### Read in unrooted tree from IQ-TREE
+tree = read.tree("/scratch/tcm0036/distichus-ddRAD/brevirostris-project/phylo/pomo/PoMo_full_miss90LD_loci.treefile")
+
+### Root the tree by declaring the brevirostris clade as the outgroup
+tree2 = root(tree, resolve.root=T, outgroup = c("brevirostris", "caudalis", "marron", "websteri"))
+
+### now, add a tip for the outgroup species, A. pulchellus, labelled "Outgroup"
+tree3 <- bind.tip(tree2, tip.label = "Outgroup", where = length(tree2$tip.label) + 1, position = 0.1)
+### remove support values since Dsuite won't use them
+tree3$node.label <- NULL
+
+write.tree(tree3, file = "PoMo_full_miss90LD_loci.rooted.nwk")
+```
+
+The *A. pulchellus* outgroup is now designated as "Outgroup" in the Newick file to match what Dsuite expects in the SETS file.
+
+```{bash, eval = FALSE}
+#! /usr/bin/env bash
+
+module load gcc/5.3.0
+source ~/mambaforge/etc/profile.d/conda.sh # Or path to where your conda is
+conda activate genomics_env
+
+VCF=/scratch/tcm0036/distichus-ddRAD/brevirostris-project/geneflow/dsuite/pulchellus-outgroup/filtered_outgroup_miss90.vcf.gz
+SETS=/scratch/tcm0036/distichus-ddRAD/brevirostris-project/geneflow/dsuite/pulchellus-outgroup/SETS.txt
+TREE=/scratch/tcm0036/distichus-ddRAD/brevirostris-project/geneflow/dsuite/pulchellus-outgroup/PoMo_full_miss90LD_loci.rooted.nwk
+
+/home/tcm0036/Dsuite/Build/Dsuite Dtrios --tree $TREE $VCF $SETS
+
+/home/tcm0036/Dsuite/Build/Dsuite Fbranch $TREE SETS_tree.txt > fbranch_matrix.txt
+/home/tcm0036/Dsuite/Build/Dsuite Fbranch $TREE SETS_tree.txt -Z > fbranch_Z_matrix.txt
+/home/tcm0036/Dsuite/Build/Dsuite Fbranch $TREE SETS_tree.txt --Pb-matrix > fbranch_P_matrix.txt
+
+dtools.py fbranch_matrix.txt PoMo_full_miss90LD_loci.rooted.nwk --dpi 300 
+```
+
+```{r, echo=FALSE}
+knitr::include_graphics("/Users/tannermyers/Dropbox/Distichus_Project/brevirostris-ms/snp-analyses/Dsuite/pulchellus-outgroup/fbranch.png")
+```
+
+```{r}
+library(tidyverse)
+
+fbranch <- read_table("/Users/tannermyers/Dropbox/Distichus_Project/brevirostris-ms/snp-analyses/Dsuite/pulchellus-outgroup/fbranch_matrix.txt", na = "nan")
+### Identify numeric taxon columns (exclude known non-taxon columns)
+non_taxon_cols <- c("branch", "branch_descendants", "Outgroup")
+taxon_cols <- setdiff(names(fbranch), non_taxon_cols)
+
+long_df <- fbranch %>%
+    pivot_longer(cols = all_of(taxon_cols), names_to = "taxon", values_to = "fval") %>%
+    filter(!is.na(fval) & fval != 0)
+
+zdf <- read_table("/Users/tannermyers/Dropbox/Distichus_Project/brevirostris-ms/snp-analyses/Dsuite/pulchellus-outgroup/SETS_tree.txt", col_names = TRUE)
+# Match and assign max |Z-score| where P3 == taxon
+long_df$zscore <- sapply(long_df$taxon, function(taxon) {
+  matches <- as.numeric(zdf$`Z-score`[zdf$P3 == taxon])
+  if (length(matches) > 0 && any(!is.na(matches))) {
+    max(abs(matches), na.rm = TRUE)
+  } else {
+    NA
+  }
+})
+
+### Compute 2-tailed p-values and FDR
+long_df <- long_df %>%
+    mutate(
+      p = 2 * pnorm(-abs(zscore)),
+      fdr = p.adjust(p, method = "fdr"),
+      significant = fdr < 0.05
+    )
+long_df
+
+### Show significant results
+cat("Significant f-branch introgression tests (FDR < 0.05):\n")
+print(subset(long_df, significant)[, c("branch", "taxon", "fval", "zscore", "fdr")])
+
+# Save all results to file
+write.table(long_df, "/Users/tannermyers/Dropbox/Distichus_Project/brevirostris-ms/snp-analyses/Dsuite/pulchellus-outgroup/fbranch_with_significance.txt", sep = "\t", row.names = FALSE, quote = FALSE)
+```
