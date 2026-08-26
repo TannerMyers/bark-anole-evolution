@@ -1,0 +1,177 @@
+---
+title: "Inferring a species tree for the *Anolis distichus* species group with the polymorphism-aware phylogenetic model (PoMo)"
+author: "Tanner Myers"
+output:
+    html_document:
+        toc: TRUE
+---
+
+# `IQ-TREE2`: Polymorphism-aware species tree estimation
+
+An approach that I would argue has been under-used by empirical systematists is the use of polymorphism-aware phylogenetic models. Whereas substitution-model based phylogenetic models only consider mutation to be a source of variation, these models account for incomplete lineage sorting by using within-species variation.
+To achieve this, instead of providing sequences for each individual, users must define their populations or species *a priori* and generate a "counts" file that represents each site as the number of A's, T's, C's, and G's present at that site in a given population, like this:
+
+```
+                ravitergum      ignigularis
+scaffold_1:1    0,0,0,8         4,0,0,4
+scaffold_1:3    0,0,0,4         2,0,0,3 
+```
+
+## Prepare data for PoMo
+
+I'll use the same set of loci used for inferring the maximum likelihood concatenated tree. First, I will obtain a file in `fasta` format from the allsites VCF produced using `STACKS`:
+```{bash, eval = FALSE}
+#!/usr/bin/env bash
+#SBATCH --job-name=brev-stacks
+#SBATCH --nodes=1
+#SBATCH --ntasks-per-node=1
+#SBATCH --cpus-per-task=10
+#SBATCH --partition=jro0014_amd
+#SBATCH --mem=82gb
+#SBATCH --time=48:00:00
+#SBATCH --mail-user=tcm0036@auburn.edu
+#SBATCH --mail-type=FAIL,END
+#SBATCH --error=err.pops_%j
+#SBATCH --output=out.pops_%j
+
+source ~/mambaforge/etc/profile.d/conda.sh
+conda activate genomics_env
+
+POPMAP=/home/tcm0036/distichus-ddRAD/brevirostris-ms/scripts/bioinformatics/filtered-specimens.txt
+CAT_DIR=/scratch/tcm0036/distichus-ddRAD/brevirostris-project/stacks/gstacks/
+OUT_DIR=/scratch/tcm0036/distichus-ddRAD/brevirostris-project/stacks/populations/phylo/
+LIST=/home/tcm0036/distichus-ddRAD/brevirostris-ms/scripts/bioinformatics/fullmiss90LD_snps.txt
+
+# Run populations to get full RAD tags with invariant sites for white-listed loci (concatenated ML and PoMo tree)
+populations -P $CAT_DIR -M $POPMAP -O $OUT_DIR -W $LIST -t 10 --max-obs-het 0.5 --phylip-var-all --vcf-all
+```
+
+Using Biopython, we can convert the phylip file to fasta format:
+```{python, eval = FALSE}
+from Bio import AlignIO
+
+AlignIO.convert("/scratch/tcm0036/distichus-ddRAD/brevirostris-project/stacks/populations/phylo/populations.all.phylip",
+    "phylip",
+    "/scratch/tcm0036/distichus-ddRAD/brevirostris-project/stacks/populations/phylo/pomo/populations.all.phylip.fasta",
+    "fasta")
+```
+
+```{bash, eval = FALSE}
+### get sample identifiers from FASTA and their population assignments for changing names in the FASTA
+grep ">" populations.all.phylip.fasta | sed 's/>//g' | awk -v "FS=." '{print $1}' > fasta_samples.txt
+awk '{print $1, $7}' ~/distichus-ddRAD/brevirostris-ms/sampling-master-detailed.tsv | tail -n297 > fasta_sample_pops.txt
+# awk '{print $1}' fasta_sample_pops.txt | diff fasta_samples.txt -
+awk '{print $2}' fasta_sample_pops.txt > pops.txt
+
+awk 'FNR==NR {names[++i] = $1; next} /^>/ {print ">" names[++j]; next} 1' pops.txt populations.all.phylip.fasta  > full_miss90_LD_loci.pops.fasta
+
+### use --iupac option to model heterozygous sites encoded as IUPAC codes
+FastaToCounts.py --iupac full_miss90LD_loci.pops.fasta full_miss90LD_loci.pops.cf
+```
+
+# Run IQ-TREE2 specifying PoMo model
+
+## Determining the virtual population size parameter
+
+```{bash, eval = FALSE}
+sort /scratch/tcm0036/distichus-ddRAD/brevirostris-project/stacks/populations/phylo/pomo/pops.txt | uniq -c | awk '{print $1}' | awk '{ total += $1; count++ } END { print total/count }'
+```
+Our average population size is 13.5 individuals, but is as low as 4 individuals. Therefore, we will use the default value of N=9 and contrast it with N=4.
+
+We can estimate a species tree using the PoMo model in `IQ-TREE2`. I'll 
+```{bash, eval = FALSE}
+#! /usr/bin/env bash
+#SBATCH --job-name=PoMo
+#SBATCH --partition=jro0014_amd
+#SBATCH --mem=56G
+#SBATCH --time=12:00:00
+#SBATCH --error=err.PoMo_%j
+#SBATCH --output=out.PoMo_%j
+
+source ~/mambaforge/etc/profile.d/conda.sh
+conda activate phyloenv
+
+cd /scratch/tcm0036/distichus-ddRAD/brevirostris-project/phylo/pomo
+
+CF=/scratch/tcm0036/distichus-ddRAD/brevirostris-project/stacks/populations/phylo/pomo/full_miss90LD_loci.pops.cf
+
+### Run IQ-TREE2
+iqtree -s $CF -B 1000 -alrt 1000 -nt AUTO -seed 1968 -m GTR+P+N9+G4 -pre PoMo_full_miss90LD_loci
+```
+
+Let's visualize the unrooted PoMo tree (N=9):
+
+```{r, fig.width = 16, fig.height = 16}
+library(tidyverse)
+library(ape)
+library(ggtree)
+library(treeio)
+
+pomo <-read.tree("/Users/tannermyers/Dropbox/Distichus_Project/brevirostris-ms/phylo/iqtree-pomo/PoMo_full_miss90LD_loci.treefile")
+plot.phylo(pomo, show.node.label = TRUE, cex = 0.8)
+
+### Root tree using brevirostris clade as outgroup
+pomo2 <- root(pomo, outgroup = c('brevirostris', 'caudalis', 'websteri', 'marron'), resolve.root = TRUE)
+plot.phylo(pomo2, show.node.label = TRUE, cex = 0.8)
+pomo2$tip.label
+
+# Reordered to match pomo2$tip.label order
+tip_labels <- c("A. d. aurifer", "A. d. biminiensis", "A. d. distichoides", "A. d. dapsilis", 
+                "A. d. distichus", "A. d. ocior", "A. brevirostris", "A. caudalis", 
+                "A. marron", "A. websteri", "A. d. ravitergum", "A. d. ignigularis - West",
+                "A. d. ignigularis - East", "A. d. properus", "A. d. sejunctus", 
+                "A. d. dominicensis - East", "A. d. dominicensis - West", 
+                "A. d. dominicensis - Northwest", "A. d. favillarum", 
+                "A. d. dominicensis - Southwest", "A. d. vinosus", "A. d. suppar")
+
+# Reordered colors to match
+tip_colors <- setNames(c(
+        "#DB0CC4", # aurifer
+        "#DBA163", # biminiensis
+        "#662822", # distichoides
+        "#104728", # dapsilis
+        "#7B3F8A", # distichus
+        "#D1C5AE", # ocior
+        "#202AC2", # brevirostris
+        "#93BBBD", # caudalis
+        "#756CA3", # marron
+        "#000000", # websteri
+        "#BBDB8B", # ravitergum
+        "#30C7AB", # west ignigularis
+        "#28C3D1", # east ignigularis
+        "#BDA425", # properus
+        "#87DB41", # sejunctus
+        "#2E4766", # dom2 (East)
+        "#B83B15", # dom4 (West)
+        "#7C15E6", # dom1 (Northwest)
+        "#FFE684", # favillarum
+        "#CE0452", # dom3 (Southwest)
+        "#DB8CA3", # vinosus
+        "#DB6E1B"  # suppar
+    ),
+        tip_labels
+)
+
+# Update tip labels
+pomo2$tip.label <- tip_labels
+
+
+plot.phylo(pomo2, show.node.label = TRUE, label.offset = 0.001)
+tiplabels(pch = 16, col = tip_colors)
+
+
+ggtree(pomo2) + 
+        geom_tiplab(size = 6, offset = 0.2,
+                family = "Helvetica", fontface = "italic") +
+        geom_nodelab(size = 4, hjust = -0.2) +  # Show node labels
+        geom_tippoint(aes(color = label), size = 5) +
+        scale_color_manual(values = tip_colors) +
+        theme(legend.position = "none",
+                axis.line.x = element_blank(),
+                axis.text.x = element_blank(),
+                axis.ticks.x = element_blank()) +
+        hexpand(.3)
+
+ggsave("/Users/tannermyers/Dropbox/Distichus_Project/brevirostris-ms/figures/PoMo_species_tree.pdf",
+    width = 14, height = 14, dpi = 300)
+```

@@ -12,4 +12,7 @@ This repository contains the code necessary to reproduce the results of &lt;>INS
 
 | Species tree inference with `SVDquartets` | [scripts/svdquartets.rmd](scripts/svdquartets.rmd) | [HTML](https://TannerMyers.github.io/bark-anole-evolution/svdquartets.html) |
 
+| Species tree inference using polymorphism-aware phylogenetic model (PoMo) | [scripts/PoMo-species-tree-estimation.rmd](scripts/PoMo-species-tree-estimation.rmd) | [HTML](https://TannerMyers.github.io/bark-anole-evolution/PoMo-species-tree-estimation.html) |
+
+
 ## Gene flow Analyses
