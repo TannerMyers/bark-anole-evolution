@@ -1,0 +1,442 @@
+---
+title: "Inferring a phylogeny of the *Anolis distichus* species group with `IQ-TREE2`"
+author: "Tanner Myers"
+output:
+    html_document:
+        toc: TRUE
+---
+
+To obtain an estimate of relationships among the 297 samples in our dataset, I am using the RAD loci with SNPs used for the 90% complete SNP dataset used for population genomics analyses. To get the full RADtags for those loci, with both invariant and variant sites, I am making a whitelist of the loci included and using the `populations` module of `Stacks` to extract those loci.
+
+## Make "whitelist" of RAD loci
+```{r, eval = F}
+library(vcfR)
+
+## read in VCF filtered and pruned for physical linkage
+vcfR <- read.vcfR("/scratch/tcm0036/distichus-ddRAD/brevirostris-project/bcftools/full_miss90_LD.vcf")
+
+## check out metadata
+head(vcfR@fix)
+
+## isolate the third column, which contains the name of each locus
+head(vcfR@fix[,3])
+
+## get list of just locus names to use as whitelist for stacks
+whitelist <- sub(":.*", "", vcfR@fix[,3])
+
+## make sure the locus names look right
+whitelist[1:5]
+
+### write out whitelist for stacks
+write.table(whitelist, file = "/home/tcm0036/distichus-ddRAD/brevirostris-ms/scripts/bioinformatics/fullmiss90LD_snps.txt", quote = F, row.names = F, col.names = F)
+```
+
+## Run populations 
+```{bash, eval=F}
+#!/usr/bin/env bash
+#SBATCH --job-name=brev-stacks
+#SBATCH --nodes=1
+#SBATCH --ntasks-per-node=10
+#SBATCH --partition=jro0014_amd
+#SBATCH --mem-per-cpu=12gb
+#SBATCH --time=1:00:00
+#SBATCH --mail-user=tcm0036@auburn.edu
+#SBATCH --mail-type=FAIL,END
+#SBATCH --error=err.pops_%j
+#SBATCH --output=out.pops_%j
+
+module load stacks/2.61
+
+POPMAP=/home/tcm0036/distichus-ddRAD/brevirostris-ms/scripts/bioinformatics/filtered-specimens.txt
+CAT_DIR=/scratch/tcm0036/distichus-ddRAD/brevirostris-project/stacks/gstacks
+OUT_DIR=/scratch/tcm0036/distichus-ddRAD/brevirostris-project/stacks/populations/phylo
+LIST=/home/tcm0036/distichus-ddRAD/brevirostris-ms/scripts/bioinformatics/fullmiss90LD_snps.txt
+
+# Run populations to get full RAD tags with invariant sites
+populations -P $CAT_DIR -M $POPMAP -O $OUT_DIR -W $LIST -t 10 --phylip-var-all --vcf-all
+```
+
+Run `grep -v "^#" populations.all.phylip > tmp && mv tmp populations.all.phylip`.
+
+## Estimate concatenated RAD loci phylogeny
+```{bash, eval=F}
+#! /usr/bin/env bash
+#SBATCH --partition jro0014_amd
+#SBATCH --mem 12G
+#SBATCH --time 24:00:00
+#SBATCH --output out.concatTree_%j
+#SBATCH --error err.concatTree_%j
+
+source ~/mambaforge/etc/profile.d/conda.sh
+conda activate phyloenv
+
+MSA=/scratch/tcm0036/distichus-ddRAD/brevirostris-project/stacks/populations/phylo/populations.all.phylip
+
+cd /scratch/tcm0036/distichus-ddRAD/brevirostris-project/phylo/iq-tree/concat_miss90LD
+
+### Run IQ-TREE2
+iqtree -s $MSA -m MFP -B 1000 --alrt 1000 -st DNA -seed 1968 -nt AUTO --prefix concat_miss90LD
+```
+
+```{r}
+library(tidyverse)
+library(stringr)
+library(ape)
+library(phytools)
+library(phangorn)
+
+# popmap <- read_table("/Users/tannermyers/Dropbox/Distichus_Project/brevirostris-ms/brevirostris-project-master-popmap-detailed.tsv")
+# popmap <- popmap %>% filter(taxon != "altavelensis")
+popmap <- read_table("/Users/tannermyers/Dropbox/Distichus_Project/brevirostris-ms/sampling-master-detailed.tsv") 
+
+popmap$population_post[popmap$population_post == "dom1"] <- "dominicensis_NW"
+popmap$population_post[popmap$population_post == "dom2"] <- "dominicensis_E"
+popmap$population_post[popmap$population_post == "dom3"] <- "dominicensis_SW"
+popmap$population_post[popmap$population_post == "dom4"] <- "dominicensis_W"
+
+cols <- setNames(c("#DB0CC4", # aurifer
+        "#DBA163", # biminiensis
+        "#202AC2", # brevirostris
+        "#BBDB8B", # ravitergum
+        "#93BBBD", # caudalis
+        "#104728", # dapsilis
+        "#662822", # distichoides
+        "#7B3F8A", # distichus
+        "#B83B15", # dom4
+        "#7C15E6", # dom1
+        "#2E4766", # dom2
+        "#30C7AB", # west ignigularis
+        "#CE0452", # dom3
+        "#FFE684", # favillarum
+        "#28C3D1", # east ignigularis
+        "#BDA425", # properus
+        "#756CA3", # marron
+        "#D1C5AE", # ocior
+        "#87DB41", # sejunctus
+        "#DB6E1B", # suppar
+        "#DB8CA3", # vinosus
+        "#000000" # websteri
+        ),
+        unique(popmap$population_post)
+)
+col_labs <- unique(popmap$population_post)
+```
+
+```{r, fig.width = 24, fig.height = 24}
+tree <- read.tree("/Users/tannermyers/Dropbox/Distichus_Project/brevirostris-ms/phylo/iqtree-concat/concat_miss90LD.treefile")
+tree$tip.label <- str_split(tree$tip.label, pattern = "\\.", simplify = T)[,1]
+tree$tip.label %in% popmap$specimen
+
+popmap <- popmap[match(tree$tip.label, popmap$specimen),]
+tree$taxon <- popmap$population_post
+tree$tip.label <- paste(tree$tip.label, tree$taxon, popmap$locality, sep = "_")
+
+tree2 <- midpoint(tree)
+plot(tree2, show.node.label = TRUE)
+```
+
+```{r, fig.width = 32, fig.height = 32}
+popmap <- popmap %>% mutate(Color = cols[population_post],
+                             tip_label = paste(specimen, population_post, locality, sep = "_"))
+tip_colors <- popmap %>% select(tip_label, Color) %>% deframe()
+
+# pdf("/Users/tannermyers/Dropbox/Distichus_Project/brevirostris-ms/figures/concat_miss90LD_tree_colored_tips.pdf", width = 32, height = 32)
+plot.phylo(tree2)
+tiplabels(pch = 16, col = tip_colors)
+# dev.off()
+# nodelabels(pch = 21, bg = node_colors, col = "white", cex = 1.2)
+```
+
+```{r, fig.width = 18, fig.height = 18}
+library(ggtree)
+library(tidytree)
+library(ggnewscale)
+
+# Parse the support values
+parse_support <- function(label) {
+  if (is.na(label) || label == "") return(c(NA, NA))
+    parts <- strsplit(as.character(label), "/")[[1]]
+    shalrt <- as.numeric(parts[1])
+    ufboot <- as.numeric(parts[2])
+    return(c(shalrt, ufboot))
+}
+# Extract UFboot and SH-aLRT values
+support_values <- t(sapply(tree2$node.label, parse_support))
+shalrt <- support_values[, 1]
+ufboot <- support_values[, 2]
+
+# Replace labels with NA where BOTH values exceed thresholds
+tree2$node.label <- ifelse(shalrt >= 80 & ufboot >= 95, 
+                           "supported", 
+                           tree2$node.label)
+
+p <- ggtree(tree2) +
+        geom_tiplab(size = 4, family = "Helvetica", offset = 0.0001) +
+        geom_point2(aes(subset = !isTip & label == "supported"),
+                size  = 2,
+                color = "black",
+                shape = 16) + # filled circle
+        # geom_nodelab(aes(subset = !isTip),
+        # size = 2,
+        # hjust = -0.2,
+        # color = "gray40") +
+        # geom_text(aes(label = node), size = 2, color = "blue") + # Show node labels for mapping
+        geom_tippoint(aes(color = label), size = 5) +
+        scale_color_manual(values = tip_colors) +
+        theme(legend.position = "none",
+                axis.line.x = element_blank(),
+                axis.text.x = element_blank(),
+                axis.ticks.x = element_blank()) +
+        hexpand(.3)
+p
+ggsave(filename = "~/Dropbox/Apps/Overleaf/distichus_tree/supplemental/supp-figs/concatenated-90completeLD-ML-tree.pdf",
+        limitsize = FALSE, dpi = 300, width = 16, height = 40)
+
+# p %>% collapse(node = 314, "min", fill = "#662822")
+clade_info <- tibble(
+        node  = c(332, 319, 315, 326,
+                329, 323, 453, 425,
+                384, 516, 562, 558,
+                542, 586, 589, 300,
+                422, 421, 424, 578),
+        label = c("A. d. dominicensis - E", "A. d. distichoides", "A. d. biminiensis", "A. d. dapsilis",
+                "A. d. ocior",  "A. d. distichus", "A. d. ignigularis - W", "A. d. ravitergum",
+                "A. brevirostris", "A. d. sejunctus", "A. d. favillarum", "A. d. dominicensis - NW",
+                "A. d. dominicensis - W", "A. d. vinosus", "A. d. suppar", "A. d. aurifer",
+                "A. marron", "A. caudalis", "A. websteri", "A. d. dominicensis - SW"),  # clade names
+  fill  = cols[c("dominicensis_E", "distichoides", "biminiensis", "dapsilis",
+                "ocior", "distichus", "west_ignigularis", "ravitergum",
+                "brevirostris", "sejunctus", "favillarum", "dominicensis_NW",
+                "dominicensis_W", "vinosus", "suppar", "aurifer",
+                "marron", "caudalis", "websteri", "dominicensis_SW")]  # matched colors
+)
+
+# Uncollapsed taxa info
+uncollapsed_info <- tibble(
+  node  = c(494, 475),  # replace with actual node numbers
+  label = c("A. d. properus", "A. d. ignigularis - E"),
+  fill  = cols[c("properus", "east_ignigularis")]
+)
+
+# Collapse all clades iteratively
+p_collapsed <- ggtree(tree2, branch.length = "none")
+
+for (i in seq_len(nrow(clade_info))) {
+  p_collapsed <- collapse(p_collapsed,
+                           node  = clade_info$node[i],
+                           mode  = "mixed",
+                           fill  = clade_info$fill[i],
+                           alpha = 0.8)
+}
+
+# Add clade labels and bootstrap support on remaining nodes
+p_collapsed +
+        geom_tippoint(aes(color = label), size = 2) +
+        # geom_tiplab(aes(color = label),
+        #         size = 2,
+        #         offset = 0.1,
+        #         fontface = "italic") +
+        scale_color_manual(values = tip_colors) +
+        new_scale_color() +
+geom_cladelab(data = clade_info,
+        mapping = aes(node = node,
+                label = label,
+                color = fill),
+                fontsize = 5,
+                fontface = "italic",
+                offset = 0.05,
+                offset.text = 0.1,
+                align = TRUE,
+                barsize = 0.5) +
+geom_cladelab(data = uncollapsed_info,
+        mapping = aes(node = node,
+                label = label,
+                color = fill),
+                fontsize = 5,
+                fontface = "italic",
+                offset = 0.05,
+                offset.text = 0.1,
+                align = FALSE,
+                barsize = 0,
+                barcolour = NA) +
+scale_color_identity() +
+# geom_nodelab(aes(subset = !isTip),
+#         size = 2,
+#         hjust = -0.2,
+#         color = "gray40") +
+theme_tree() +
+theme(legend.position = "none") +
+hexpand(.3)
+ggsave(filename = "~/Dropbox/Distichus_Project/brevirostris-ms/figures/concatenated-90completeLD-ML-tree-collapsed.pdf",
+        limitsize = FALSE, dpi = 300)
+```
+
+## Prune tips -- species tree sampling
+```{r, fig.width = 12, fig.height = 12}
+# tree3 <- keep.tip(tree2, tip = c("4007_brevirostris", "8192_websteri", "8231_caudalis", "LM1218_marron", "4277_ravitergum",
+#                   "4870_ignigularis", "10221_properus", "5081_sejunctus", "858_dom2", "203_ocior", "JASIL3075_dapsilis",
+#                   "214_distichus", "JASIL3236_distichoides", "PM106_biminiensis", "8180_dom1", "6069_dom4", "7501_favillarum",
+#                   "8329_dom3", "8306_vinosus", "8288_suppar", "8302_aurifer")
+#                 )
+# plot.phylo(tree3, show.node.label = TRUE)
+
+# tree3$tip.label <- c("A. d. aurifer", "A. d. biminiensis", "A. d. distichoides", "A. d. distichus", "A. d. dapsilis",
+#                      "A. d. ocior", "A. d. dominicensis - East", "A. brevirostris", "A. caudalis", "A. marron", "A. websteri",
+#                      "A. d. ravitergum", "A. d. ignigularis", "A. d. properus", "A. d. sejunctus", "A. d. dominicensis - West",
+#                      "A. d. dominicensis - Northwest", "A. d. favillarum", "A. d. dominicensis - Southwest", "A. d. vinosus", "A. d. suppar"
+#                      )
+# tip_colors <- setNames(c("#DB0CC4", # aurifer
+#         "#DBA163", # biminiensis
+#         "#662822", # distichoides
+#         "#7B3F8A", # distichus                
+#         "#104728", # dapsilis
+#         "#D1C5AE", # ocior
+#         "#2E4766", # dom2
+#         "#202AC2", # brevirostris
+#         "#93BBBD", # caudalis
+#         "#756CA3", # marron
+#         "#000000", # websteri
+#         "#BBDB8B", # ravitergum
+#         "#28C3D1", # ignigularis
+#         "#BDA425", # properus
+#         "#87DB41", # sejunctus
+#         "#B83B15", # dom4
+#         "#7C15E6", # dom1
+#         "#FFE684", # favillarum
+#         "#CE0452", # dom3
+#         "#DB8CA3", # vinosus
+#         "#DB6E1B" # suppar
+#         ),
+#         tree3$tip.label
+# )
+
+# pdf("/Users/tannermyers/Dropbox/Distichus_Project/brevirostris-ms/figures/concat_miss90LD_tree_subset.pdf", width = 16, height = 16)
+# plot.phylo(tree3, show.node.label = TRUE, label.offset = 0.01)
+# tiplabels(pch = 16, col = tip_colors)
+# dev.off()
+```
+
+## Software environment
+```{r}
+sessionInfo()
+```
+
+```
+# packages in environment at /mmfs1/home/tcm0036/mambaforge/envs/phyloenv:
+#
+# Name                    Version                   Build  Channel
+_libgcc_mutex             0.1                 conda_forge    conda-forge
+_openmp_mutex             4.5                       1_gnu    conda-forge
+alsa-lib                  1.2.10               hd590300_0    conda-forge
+arpack                    3.7.0                hdefa2d7_2    conda-forge
+biopython                 1.79            py310h6acc77f_1    conda-forge
+bzip2                     1.0.8                h7f98852_4    conda-forge
+c-ares                    1.18.1               h7f98852_0    conda-forge
+ca-certificates           2025.1.31            hbcca054_0    conda-forge
+cairo                     1.18.0               h3faef2a_0    conda-forge
+curl                      7.81.0               h494985f_0    conda-forge
+expat                     2.5.0                hcb278e6_1    conda-forge
+font-ttf-dejavu-sans-mono 2.37                 hab24e00_0    conda-forge
+font-ttf-inconsolata      3.000                h77eed37_0    conda-forge
+font-ttf-source-code-pro  2.038                h77eed37_0    conda-forge
+font-ttf-ubuntu           0.83                 h77eed37_1    conda-forge
+fontconfig                2.14.2               h14ed4e7_0    conda-forge
+fonts-conda-ecosystem     1                             0    conda-forge
+fonts-conda-forge         1                             0    conda-forge
+freetype                  2.12.1               h267a509_2    conda-forge
+gettext                   0.21.1               h27087fc_0    conda-forge
+giflib                    5.2.1                h0b41bf4_3    conda-forge
+git                       2.42.0          pl5321h86e50cf_0    conda-forge
+gmp                       6.2.1                h58526e2_0    conda-forge
+graphite2                 1.3.13            h58526e2_1001    conda-forge
+harfbuzz                  8.3.0                h3d44ed6_0    conda-forge
+icu                       73.2                 h59595ed_0    conda-forge
+iqtree                    2.4.0                h503566f_0    bioconda
+julia                     1.9.3                h06b7c97_0    conda-forge
+krb5                      1.19.2               h48eae69_3    conda-forge
+lcms2                     2.16                 hb7c19ff_0    conda-forge
+ld_impl_linux-64          2.36.1               hea4e1c9_2    conda-forge
+lerc                      4.0.0                h27087fc_0    conda-forge
+libblas                   3.9.0           12_linux64_openblas    conda-forge
+libcblas                  3.9.0           12_linux64_openblas    conda-forge
+libcups                   2.3.3                hf5a7f15_1    conda-forge
+libcurl                   7.81.0               h494985f_0    conda-forge
+libdeflate                1.19                 hd590300_0    conda-forge
+libedit                   3.1.20191231         he28a2e2_2    conda-forge
+libev                     4.33                 h516909a_1    conda-forge
+libexpat                  2.5.0                hcb278e6_1    conda-forge
+libffi                    3.4.2                h7f98852_5    conda-forge
+libgcc                    14.2.0               h77fa898_1    conda-forge
+libgcc-ng                 14.2.0               h69a702a_1    conda-forge
+libgfortran-ng            13.2.0               h69a702a_3    conda-forge
+libgfortran5              13.2.0               ha4646dd_3    conda-forge
+libgit2                   1.7.1                hca3a8ce_0    conda-forge
+libglib                   2.78.1               hebfc3b9_0    conda-forge
+libgomp                   14.2.0               h77fa898_1    conda-forge
+libiconv                  1.17                 hd590300_2    conda-forge
+libjpeg-turbo             3.0.0                hd590300_1    conda-forge
+liblapack                 3.9.0           12_linux64_openblas    conda-forge
+libnghttp2                1.52.0               h61bc06f_0    conda-forge
+libnsl                    2.0.0                h7f98852_0    conda-forge
+libopenblas               0.3.18          pthreads_h8fe5266_0    conda-forge
+libopenblas-ilp64         0.3.18          pthreads_h0aa5bea_0    conda-forge
+libpng                    1.6.39               h753d276_0    conda-forge
+libssh2                   1.11.0               h0841786_0    conda-forge
+libstdcxx                 14.2.0               hc0a3c3a_1    conda-forge
+libstdcxx-ng              13.2.0               h7e041cc_3    conda-forge
+libtiff                   4.6.0                ha9c0a0a_2    conda-forge
+libunwind                 1.6.2                h9c3ff4c_0    conda-forge
+libutf8proc               2.8.0                h166bdaf_0    conda-forge
+libuuid                   2.38.1               h0b41bf4_0    conda-forge
+libwebp-base              1.3.2                hd590300_0    conda-forge
+libxcb                    1.15                 h0b41bf4_0    conda-forge
+libzlib                   1.2.13               hd590300_5    conda-forge
+mbedtls                   3.1.0                h9c3ff4c_1    conda-forge
+metis                     5.1.0             h58526e2_1006    conda-forge
+mpfr                      4.2.1                h9458935_0    conda-forge
+ncurses                   6.2                  h58526e2_4    conda-forge
+numpy                     1.21.4          py310h57288b1_0    conda-forge
+openblas-ilp64            0.3.18          pthreads_h3d04fff_0    conda-forge
+openjdk                   21.0.1               haa376d0_0    conda-forge
+openlibm                  0.7.5                h7f98852_0    conda-forge
+openssl                   3.4.1                h7b32b05_0    conda-forge
+p7zip                     16.02             h9c3ff4c_1000    conda-forge
+pcre2                     10.40                hc3806b6_0    conda-forge
+perl                      5.32.1          1_h7f98852_perl5    conda-forge
+pip                       21.3.1                   pypi_0    pypi
+pixman                    0.42.2               h59595ed_0    conda-forge
+pthread-stubs             0.4               h36c2ea0_1001    conda-forge
+pygtrie                   2.4.2                    pypi_0    pypi
+python                    3.10.0          h543edf9_3_cpython    conda-forge
+python_abi                3.10                    2_cp310    conda-forge
+readline                  8.1                  h46c0cb4_0    conda-forge
+seqmagick                 0.8.4                    pypi_0    pypi
+setuptools                59.4.0          py310hff52083_0    conda-forge
+sqlite                    3.37.0               h9cd32fc_0    conda-forge
+suitesparse               5.10.1               h9e50725_1    conda-forge
+tbb                       2021.5.0             h4bd325d_0    conda-forge
+tk                        8.6.11               h27826a3_1    conda-forge
+tzdata                    2021e                he74cb21_0    conda-forge
+wheel                     0.37.0                   pypi_0    pypi
+xorg-fixesproto           5.0               h7f98852_1002    conda-forge
+xorg-inputproto           2.3.2             h7f98852_1002    conda-forge
+xorg-kbproto              1.0.7             h7f98852_1002    conda-forge
+xorg-libice               1.1.1                hd590300_0    conda-forge
+xorg-libsm                1.2.4                h7391055_0    conda-forge
+xorg-libx11               1.8.7                h8ee46fc_0    conda-forge
+xorg-libxau               1.0.11               hd590300_0    conda-forge
+xorg-libxdmcp             1.1.3                h7f98852_0    conda-forge
+xorg-libxext              1.3.4                h0b41bf4_2    conda-forge
+xorg-libxfixes            5.0.3             h7f98852_1004    conda-forge
+xorg-libxi                1.7.10               h7f98852_0    conda-forge
+xorg-libxrender           0.9.11               hd590300_0    conda-forge
+xorg-libxt                1.3.0                hd590300_1    conda-forge
+xorg-libxtst              1.2.3             h7f98852_1002    conda-forge
+xorg-recordproto          1.14.2            h7f98852_1002    conda-forge
+xorg-renderproto          0.11.1            h7f98852_1002    conda-forge
+xorg-xextproto            7.3.0             h0b41bf4_1003    conda-forge
+xorg-xproto               7.0.31            h7f98852_1007    conda-forge
+xz                        5.2.6                h166bdaf_0    conda-forge
+zlib                      1.2.13               hd590300_5    conda-forge
+zstd                      1.5.5                hfc55251_0    conda-forge
+```

@@ -1,0 +1,167 @@
+---
+title: "Estimating a population network for the *Anolis distichus* species group"
+author: "Tanner Myers"
+output:
+  rmdformats::html_clean:
+    highlight: kate
+---
+
+# Estimating a population network using `phangorn`
+
+```{r, eval = FALSE}
+library(vcfR)
+library(stringr)
+library(StAMPP)
+library(tidyverse)
+library(adegenet)
+library(phangorn)
+
+setwd("/scratch/tcm0036/distichus-ddRAD/brevirostris-project/snp-analyses/neighbor-network")
+
+### Read in linkage-pruned VCFs
+vcf <- read.vcfR("/scratch/tcm0036/distichus-ddRAD/brevirostris-project/bcftools/full_miss90_LD.vcf")
+gen <- vcfR2genlight(vcf)
+gen1 <- gen[indNames(gen) != "8304.pietro.aligned.sorted_8304.pietro.aligned.sorted"]
+
+specimens <- str_split(gen1@ind.names, "_", simplify = TRUE)
+specimens <- apply(specimens, 1, function(row){
+    if(row[1] == row[2]) {
+        return(row[1])
+    } else {
+        return(paste(row[1], row[2], sep = "_"))
+    }
+})
+specimens <- specimens %>% str_replace(".aligned.sorted", "")
+gen1@ind.names <- specimens
+
+gen1@pop <- as.factor(gen1@ind.names)
+
+### Estimate Nei's D
+neiD <- stamppNeisD(geno = gen1, pop = FALSE)
+colnames(neiD) <- rownames(neiD)
+isSymmetric(neiD)
+
+nei_dist <- as.dist(neiD)
+
+### Estimate networks
+nnet <- neighborNet(nei_dist)
+save(nnet, file = "full_miss90_LD_n-net.RData")
+```
+
+## Full sampling
+```{r, fig.width = 21, fig.height = 21}
+library(tidyverse)
+library(ape)
+library(phangorn)
+library(tanggle)
+library(ggtree)
+
+### load network object into R
+load("/Users/tannermyers/Dropbox/Distichus_Project/brevirostris-ms/snp-analyses/network/full_miss90_LD_n-net.RData")
+
+### load `popmap` table
+samp_df <- read_table("/Users/tannermyers/Dropbox/Distichus_Project/brevirostris-ms/sampling-master-detailed.tsv")
+
+### Define color and shape scheme for all taxa
+cols <- c(
+  "aurifer"          = "#DB0CC4",
+  "biminiensis"      = "#DBA163",
+  "brevirostris"     = "#202AC2",
+  "caudalis"         = "#93BBBD",
+  "dapsilis"         = "#104728",
+  "distichoides"     = "#662822",
+  "distichus"        = "#7B3F8A",
+  "dom1"             = "#7C15E6",
+  "dom2"             = "#2E4766",
+  "dom3"             = "#CE0452",
+  "dom4"             = "#B83B15",
+  "favillarum"       = "#FFE684",
+  "east_ignigularis" = "#28C3D1",
+  "west_ignigularis" = "#30C7AB",
+  "marron"           = "#756CA3",
+  "ocior"            = "#D1C5AE",
+  "properus"         = "#BDA425",
+  "ravitergum"       = "#BBDB8B",
+  "sejunctus"        = "#87DB41",
+  "suppar"           = "#DB6E1B",
+  "vinosus"          = "#DB8CA3",
+  "websteri"         = "#000000"
+)
+
+# col_labs <- unique(popmap$taxon)
+col_labs <- c(
+  "aurifer"          = "A. d. aurifer",
+  "biminiensis"      = "A. d. biminiensis",
+  "brevirostris"     = "A. brevirostris",
+  "caudalis"         = "A. caudalis",
+  "dapsilis"         = "A. d. dapsilis",
+  "distichoides"     = "A. d. distichoides",
+  "distichus"        = "A. d. distichus",
+  "dom1"             = "A. d. dominicensis (northwest)",
+  "dom2"             = "A. d. dominicensis (east)",
+  "dom3"             = "A. d. dominicensis (southwest)",
+  "dom4"             = "A. d. dominicensis (west)",
+  "favillarum"       = "A. d. favillarum",
+  "east_ignigularis" = "A. d. ignigularis (east)",
+  "west_ignigularis" = "A. d. ignigularis (west)",
+  "marron"           = "A. marron",
+  "ocior"            = "A. d. ocior",
+  "properus"         = "A. d. properus",
+  "ravitergum"       = "A. d. ravitergum",
+  "sejunctus"        = "A. d. sejunctus",
+  "suppar"           = "A. d. suppar",
+  "vinosus"          = "A. d. vinosus",
+  "websteri"         = "A. websteri"
+)
+
+shp_labs = c(
+    "aurifer"          = "Western A. distichus subspecies",
+    "biminiensis"      = "Bahamian A. distichus subspecies",
+    "brevirostris"     = "A. brevirostris species group",
+    "caudalis"         = "A. brevirostris species group",
+    "dapsilis"         = "Bahamian A. distichus subspecies",
+    "distichoides"     = "Bahamian A. distichus subspecies",
+    "distichus"        = "Bahamian A. distichus subspecies",
+    "dom1"             = "Western A. distichus subspecies",
+    "dom2"             = "Eastern A. distichus subspecies",
+    "dom3"             = "Western A. distichus subspecies",
+    "dom4"             = "Western A. distichus subspecies",
+    "favillarum"       = "Western A. distichus subspecies",
+    "east_ignigularis" = "Eastern A. distichus subspecies",
+    "west_ignigularis" = "Eastern A. distichus subspecies",
+    "marron"           = "A. brevirostris species group",
+    "ocior"            = "Bahamian A. distichus subspecies",
+    "properus"         = "Eastern A. distichus subspecies",
+    "ravitergum"       = "Eastern A. distichus subspecies",
+    "sejunctus"        = "Eastern A. distichus subspecies",
+    "suppar"           = "Western A. distichus subspecies",
+    "vinosus"          = "Western A. distichus subspecies",
+    "websteri"         = "A. brevirostris species group" 
+)
+
+samp_df$clade <- shp_labs[samp_df$population_post]
+shps <- c(
+    "Western A. distichus subspecies"  = 22,
+    "Bahamian A. distichus subspecies" = 23,
+    "Eastern A. distichus subspecies"  = 21,
+    "A. brevirostris species group"    = 24
+)
+
+samp_df <- samp_df %>% arrange(factor(specimen, levels = nnet$tip.label))
+nnet$tip.label = paste(nnet$tip.label, samp_df$population_post, sep = "_")
+samp_df <- samp_df %>% mutate(cols = cols[population_post]) %>%
+    mutate(shapes = shps[clade])
+tip_df <- data.frame(label = nnet$tip.label, color_code = samp_df$cols, shp_code = samp_df$shapes)
+plot(nnet)
+
+net_plt <- ggsplitnet(nnet)  %<+% tip_df +
+    # geom_tiplab2(hjust = -0.1) + 
+    geom_tippoint(aes(fill = color_code, shape = shp_code), size = 6, color = "white") + 
+    scale_fill_identity() +
+    scale_shape_identity() +
+    hexpand(0.3) +
+    theme(plot.margin = margin(1, 1, 1, 1))
+net_plt
+
+ggsave("/Users/tannermyers/Dropbox/Distichus_Project/brevirostris-ms/figures/neighbor-network-full-sampling-nolab.pdf", plot = net_plt, width = 20, height = 24, dpi = 350) 
+```

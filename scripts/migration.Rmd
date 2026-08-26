@@ -1,0 +1,1386 @@
+---
+title: Quantifying migration across the *Anolis distichus* group
+author: "Tanner Myers"
+output:
+    rmdformats::html_clean:
+        highlight: kate
+---
+
+We will be using `BPP` to test for gene flow with the multispecies coalescent model with migration between geographically proximate population pairs within the *Anolis distichus* species group on the island of Hispaniola.
+
+# Selecting individuals for the comparisons
+
+```{r}
+library(tidyverse)
+library(rnaturalearth)
+library(sf)
+sf::sf_use_s2(FALSE) 
+
+library(maps)
+library(ggnewscale)
+
+popmap <- read_table("~/Dropbox/Distichus_Project/brevirostris-ms/sampling-master-detailed.tsv")
+### Improved map aesthetics
+world <- rnaturalearth::ne_countries(returnclass = "sf", scale = "large")
+
+bounds <- st_bbox(c(xmin = -82, xmax = -65, 
+                  ymin = 15,   ymax = 30), 
+                crs = st_crs(world))
+
+world_cropped <- st_crop(world, bounds)
+
+### Define color scheme for all taxa
+cols <- c(
+  "aurifer"          = "#DB0CC4",
+  "biminiensis"      = "#DBA163",
+  "brevirostris"     = "#202AC2",
+  "caudalis"         = "#93BBBD",
+  "dapsilis"         = "#104728",
+  "distichoides"     = "#662822",
+  "distichus"        = "#7B3F8A",
+  "dom1"             = "#7C15E6",
+  "dom2"             = "#2E4766",
+  "dom3"             = "#CE0452",
+  "dom4"             = "#B83B15",
+  "favillarum"       = "#FFE684",
+  "east_ignigularis" = "#28C3D1",
+  "west_ignigularis" = "#30C7AB",
+  "marron"           = "#756CA3",
+  "ocior"            = "#D1C5AE",
+  "properus"         = "#BDA425",
+  "ravitergum"       = "#BBDB8B",
+  "sejunctus"        = "#87DB41",
+  "suppar"           = "#DB6E1B",
+  "vinosus"          = "#DB8CA3",
+  "websteri"         = "#000000"
+)
+
+# col_labs <- unique(popmap$taxon)
+col_labs <- c(
+  "aurifer"          = "A. d. aurifer",
+  "biminiensis"      = "A. d. biminiensis",
+  "brevirostris"     = "A. brevirostris",
+  "caudalis"         = "A. caudalis",
+  "dapsilis"         = "A. d. dapsilis",
+  "distichoides"     = "A. d. distichoides",
+  "distichus"        = "A. d. distichus",
+  "dom1"             = "A. d. dominicensis (northwest)",
+  "dom2"             = "A. d. dominicensis (east)",
+  "dom3"             = "A. d. dominicensis (southwest)",
+  "dom4"             = "A. d. dominicensis (west)",
+  "favillarum"       = "A. d. favillarum",
+  "east_ignigularis" = "A. d. ignigularis (east)",
+  "west_ignigularis" = "A. d. ignigularis (west)",
+  "marron"           = "A. marron",
+  "ocior"            = "A. d. ocior",
+  "properus"         = "A. d. properus",
+  "ravitergum"       = "A. d. ravitergum",
+  "sejunctus"        = "A. d. sejunctus",
+  "suppar"           = "A. d. suppar",
+  "vinosus"          = "A. d. vinosus",
+  "websteri"         = "A. websteri"
+)
+
+isla <- ggplot() + geom_sf(data = world_cropped) +
+        coord_sf(ylim = c(17.4, 20.2), xlim = c(-74.55, -68.25)) +
+        theme_classic() + xlab("Longitude") + ylab("Latitude")
+```
+
+Visualize samples chosen for the migration analyses on maps
+```{r}
+####### Across complex comparisons
+### A. b. wetmorei - A. d. favillarum
+bf <- read_table("~/Dropbox/Distichus_Project/brevirostris-ms/phylo/bpp/Imaps/favillarum_brevirostris_Imap.txt", col_names = c("sample", "pop"))
+samples <- str_split(bf$sample, pattern = "_", simplify = T)[,2] %>% unique()
+isla + geom_point(data = popmap[popmap$specimen %in% samples,], 
+                     aes(x = longitude, y = latitude, color = population_post), size = 2) + 
+                scale_color_manual(values = cols, labels = col_labs) + 
+                theme(legend.position = "bottom") + 
+                guides(color = guide_legend(title = "Taxon"))
+
+### A. b. deserticola - A. d. ignigularis
+bi <- read_table("~/Dropbox/Distichus_Project/brevirostris-ms/phylo/bpp/Imaps/ignigularis_brevirostris_Imap.txt", col_names = c("sample", "pop"))
+samples <- str_split(bi$sample, pattern = "_", simplify = T)[,2] %>% unique()
+length(samples) ### how many samples are included in this comparison?
+isla + geom_point(data = popmap[popmap$specimen %in% samples,], 
+                     aes(x = longitude, y = latitude, color = population_post), size = 2) + 
+                scale_color_manual(values = cols, labels = col_labs) + 
+                theme(legend.position = "bottom") + 
+                guides(color = guide_legend(title = "Taxon"))
+
+### A. b. deserticola - A. d. ravitergum
+br <- read_table("~/Dropbox/Distichus_Project/brevirostris-ms/phylo/bpp/Imaps/ravitergum_brevirostris_Imap.txt", col_names = c("sample", "pop"))
+samples <- str_split(br$sample, pattern = "_", simplify = T)[,2] %>% unique()
+length(samples)
+isla + geom_point(data = popmap[popmap$specimen %in% samples,], 
+                     aes(x = longitude, y = latitude, color = population_post), size = 2) + 
+                scale_color_manual(values = cols, labels = col_labs) + 
+                theme(legend.position = "bottom") + 
+                guides(color = guide_legend(title = "Taxon"))
+
+###### Within complex comparisons
+### A. b. wetmorei - A. b. deserticola
+wd <- read_table("~/Dropbox/Distichus_Project/brevirostris-ms/phylo/bpp/Imaps/brevirostris_wetmorei_deserticola_Imap.txt", col_names = c("sample", "pop"))
+samples <- str_split(wd$sample, pattern = "_", simplify = T)[,2] %>% unique()
+length(samples)
+isla + geom_point(data = popmap[popmap$specimen %in% samples,], 
+                     aes(x = longitude, y = latitude, color = subspecies_post), size = 2) + 
+                # scale_color_manual(values = cols, labels = col_labs) + 
+                theme(legend.position = "bottom") + 
+                guides(color = guide_legend(title = "Taxon"))
+
+### East A. d. ignigularis - East A. d. dominicensis
+id <- read_table("~/Dropbox/Distichus_Project/brevirostris-ms/phylo/bpp/Imaps/east_dominicensis_ignigularis_Imap.txt", col_names = c("sample", "pop"))
+samples <- str_split(id$sample, pattern = "_", simplify = T)[,2] %>% unique()
+length(samples)
+isla + geom_point(data = popmap[popmap$specimen %in% samples,], 
+                     aes(x = longitude, y = latitude, color = population_post), size = 2) + 
+                scale_color_manual(values = cols, labels = col_labs) + 
+                theme(legend.position = "bottom") + 
+                guides(color = guide_legend(title = "Taxon"))
+
+### East A. d. ignigularis - A. d. properus
+pi <- read_table("~/Dropbox/Distichus_Project/brevirostris-ms/phylo/bpp/Imaps/properus_ignigularis_Imap.txt", col_names = c("sample", "pop"))
+samples <- str_split(pi$sample, pattern = "_", simplify = T)[,2] %>% unique()
+length(samples)
+isla + geom_point(data = popmap[popmap$specimen %in% samples,], 
+                     aes(x = longitude, y = latitude, color = population_post), size = 2) + 
+                scale_color_manual(values = cols, labels = col_labs) + 
+                theme(legend.position = "bottom") + 
+                guides(color = guide_legend(title = "Taxon"))
+
+### East A. d. ignigularis - West A. d. ignigularis
+ewi <- read_table("~/Dropbox/Distichus_Project/brevirostris-ms/phylo/bpp/Imaps/east_west_ignigularis_Imap.txt", col_names = c("sample", "pop"))
+samples <- str_split(ewi$sample, pattern = "_", simplify = T)[,2] %>% unique()
+length(samples)
+isla + geom_point(data = popmap[popmap$specimen %in% samples,], 
+                     aes(x = longitude, y = latitude, color = population_post), size = 2) + 
+                scale_color_manual(values = cols, labels = col_labs) + 
+                theme(legend.position = "bottom") + 
+                guides(color = guide_legend(title = "Taxon")) 
+
+### West A. d. ignigularis - A. d. ravitergum
+ri <- read_table("~/Dropbox/Distichus_Project/brevirostris-ms/phylo/bpp/Imaps/ravitergum_ignigularis_Imap.txt", col_names = c("sample", "pop"))
+samples <- str_split(ri$sample, pattern = "_", simplify = T)[,2] %>% unique()
+length(samples)
+isla + geom_point(data = popmap[popmap$specimen %in% samples,], 
+                     aes(x = longitude, y = latitude, color = population_post), size = 2) + 
+                scale_color_manual(values = cols, labels = col_labs) + 
+                theme(legend.position = "bottom") + 
+                guides(color = guide_legend(title = "Taxon"))
+
+### West A. d. dominicensis - A. d. ravitergum
+rd <- read_table("~/Dropbox/Distichus_Project/brevirostris-ms/phylo/bpp/Imaps/ravitergum_dominicensis_Imap.txt", col_names = c("sample", "pop"))
+samples <- str_split(rd$sample, pattern = "_", simplify = T)[,2] %>% unique()
+length(samples)
+isla + geom_point(data = popmap[popmap$specimen %in% samples,], 
+                     aes(x = longitude, y = latitude, color = population_post), size = 2) + 
+                scale_color_manual(values = cols, labels = col_labs) + 
+                theme(legend.position = "bottom") + 
+                guides(color = guide_legend(title = "Taxon"))
+
+### West A. d. dominicensis - East A. d. dominicensis
+ewd <- read_table("~/Dropbox/Distichus_Project/brevirostris-ms/phylo/bpp/Imaps/east_west_dominicensis_Imap.txt", col_names = c("sample", "pop"))
+samples <- str_split(ewd$sample, pattern = "_", simplify = T)[,2] %>% unique()
+length(samples)
+isla + geom_point(data = popmap[popmap$specimen %in% samples,], 
+                     aes(x = longitude, y = latitude, color = population_post), size = 2) + 
+                scale_color_manual(values = cols, labels = col_labs) + 
+                theme(legend.position = "bottom") + 
+                guides(color = guide_legend(title = "Taxon"))
+
+### West A. d. dominicensis - Tiburon A. distichus subspecies
+twd <- read_table("~/Dropbox/Distichus_Project/brevirostris-ms/phylo/bpp/Imaps/tiburon_west_dominicensis_Imap.txt", col_names = c("sample", "pop"))
+samples <- str_split(twd$sample, pattern = "_", simplify = T)[,2] %>% unique()
+length(samples)
+isla + geom_point(data = popmap[popmap$specimen %in% samples,], 
+                     aes(x = longitude, y = latitude, color = population_post), size = 2) + 
+                scale_color_manual(values = cols, labels = col_labs) + 
+                theme(legend.position = "bottom") + 
+                guides(color = guide_legend(title = "Taxon"))
+```
+
+# Prepare data
+
+## make popmap files for `Stacks`
+```{bash, eval = FALSE}
+imaps=$(*Imap.txt)
+
+for f in $imaps; do 
+
+    comp=`basename $f _Imap.txt`
+
+    awk -F_ '{print $2".aligned.sorted"}' $f > samples.txt
+    awk '{print $2}' $f > pops.txt
+
+    grep -f samples.txt ../../../sampling-master-detailed.tsv 
+
+    paste samples.txt pops.txt > ../popmaps/${comp}_popmap.tsv
+
+done
+```
+
+## run `Stacks`
+
+```{bash, eval = FALSE}
+#!/usr/bin/env bash
+#SBATCH --job-name=bpp-stacks
+#SBATCH --nodes=1
+#SBATCH --ntasks-per-node=10
+#SBATCH --partition=jro0014_amd
+#SBATCH --mem-per-cpu=12gb
+#SBATCH --time=32:00:00
+#SBATCH --mail-user=tcm0036@auburn.edu
+#SBATCH --mail-type=FAIL,END
+#SBATCH --error=err.pops_%j
+#SBATCH --output=out.pops_%j
+
+source ~/mambaforge/etc/profile.d/conda.sh
+conda activate genomics_env
+
+CAT_DIR=/scratch/tcm0036/distichus-ddRAD/brevirostris-project/stacks/gstacks/
+LIST=/home/tcm0036/distichus-ddRAD/brevirostris-ms/scripts/bioinformatics/fullmiss90LD_snps.txt
+PAIRS=(popmaps/*.tsv)
+
+for COMP in ${PAIRS[@]}; do
+
+    PREFIX=$(basename $COMP _popmap.tsv)
+    OUT_DIR=/scratch/tcm0036/distichus-ddRAD/brevirostris-project/geneflow/mscm/${PREFIX}
+
+    mkdir -p $OUT_DIR
+
+    # Run populations to get full RAD tags with variant and invariant sites for white-listed loci
+    populations -P $CAT_DIR \
+        -M $COMP -O $OUT_DIR \
+        -W $LIST -t 10 \
+        --min-populations 2 \
+        --min-samples-per-pop 1.0 \p
+        --min-mac 3 \
+        --max-obs-het 0.5 \
+        --filter-haplotype-wise \
+        --fasta-samples
+
+done
+```
+
+## Convert fastas to phylip format for `BPP`:
+
+```{python, eval=FALSE}
+#!/usr/bin/env python3
+import sys
+from Bio import SeqIO
+from collections import defaultdict
+
+def parse_imap(imap_file):
+    """Build dictionary of specimen_number -> BPP_individual_ID"""
+    imap = {}
+    with open(imap_file) as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            fields = line.split()
+            bpp_id = fields[0]  # e.g. ignrav_3703_363_ign
+            specimen = bpp_id.split("_")[1]  # e.g. 3703
+            imap[specimen] = bpp_id
+    return imap
+
+def parse_fasta_by_locus(fasta_file):
+    """Group sequences by CLocus ID"""
+    loci = defaultdict(list)
+    for record in SeqIO.parse(fasta_file, "fasta"):
+        # Header: CLocus_288_Sample_1_Locus_288_Allele_0 [1388.aligned.sorted; ...]
+        header = record.description
+        locus_id = record.id.split("_")[1]  # e.g. 288
+        sample = header.split("[")[1].split(";")[0].strip()  # e.g. 1388.aligned.sorted
+        specimen = sample.replace("_rep.aligned.sorted", "").replace(".aligned.sorted", "")  # e.g. 1388
+        allele = record.id.split("_Allele_")[1]  # e.g. 0 or 1
+        loci[locus_id].append((specimen, allele, str(record.seq)))
+    return loci
+
+def write_bpp(loci, imap, output_file):
+    """Write BPP sequence file"""
+    with open(output_file, "w") as out:
+        for locus_id, seqs in loci.items():
+            ntaxa = len(seqs)
+            nsites = len(seqs[0][2])
+            out.write(f"{ntaxa} {nsites}\n")
+            for specimen, allele, seq in seqs:
+                if specimen not in imap:
+                    print(f"WARNING: specimen {specimen} not in Imap, skipping", file=sys.stderr)
+                    continue
+                bpp_id = imap[specimen]
+                out.write(f"^{bpp_id}_{allele}  {seq}\n")
+            out.write("\n")
+
+if __name__ == "__main__":
+    if len(sys.argv) != 4:
+        print("Usage: fasta_to_bpp.py <fasta> <imap> <output>")
+        sys.exit(1)
+    imap = parse_imap(sys.argv[2])
+    loci = parse_fasta_by_locus(sys.argv[1])
+    write_bpp(loci, imap, sys.argv[3])
+```
+
+```{bash, eval=FALSE}
+#!/usr/bin/env bash
+
+source ~/mambaforge/etc/profile.d/conda.sh
+conda activate genomics_env
+
+FILES_DIR=/scratch/tcm0036/distichus-ddRAD/brevirostris-project/geneflow/mscm
+OUT_DIR=/home/tcm0036/distichus-ddRAD/brevirostris-ms/scripts/geneflow/sequences
+PAIRS=(imaps/*_Imap.txt)
+
+for p in ${PAIRS[@]}; do
+
+    PAIR=$(basename $p _Imap.txt)
+
+    python3 fasta2bpp.py ${FILES_DIR}/${PAIR}/populations.samples.fa $p ${OUT_DIR}/${PAIR}_bpp.phy
+
+done
+```
+
+## Specify control file
+
+```
+seed=-1
+seqfile=/home/tcm0036/distichus-ddRAD/brevirostris-ms/scripts/geneflow/sequences/brevirostris_wetmorei_deserticola_bpp.phy
+Imapfile=/home/tcm0036/distichus-ddRAD/brevirostris-ms/scripts/geneflow/imaps/brevirostris_wetmorei_deserticola_Imap.txt
+outfile=/scratch/tcm0036/distichus-ddRAD/brevirostris-project/geneflow/mscm/brevirostris_wetmorei_deserticola/brevirostris_wetmorei_deserticola.txt
+mcmcfile=/scratch/tcm0036/distichus-ddRAD/brevirostris-project/geneflow/mscm/brevirostris_wetmorei_deserticola/brevirostris_wetmorei_deserticola.mcmc.txt
+speciesdelimitation=0
+speciestree=0
+species&tree=2 wet des
+               10  9
+               (wet,des)wetdes;
+phase=0 0 
+usedata=1
+nloci=3054
+locusrate=0
+cleandata=0
+thetaprior= 3 0.002 e
+tauprior= 3 0.01
+finetune=1
+print=1 0 0 0
+burnin=20000
+sampfreq=2
+nsample=400000
+threads=2 1 1
+migprior=0.1 10
+migration = 2
+        wet des
+        des wet
+```
+
+# Run `BPP`
+```{bash, eval=FALSE}
+#!/usr/bin/env bash
+#SBATCH --job-name=MSC-M
+#SBATCH --nodes=1
+#SBATCH --ntasks-per-node=4
+#SBATCH --partition=jro0014_amd
+#SBATCH --mem-per-cpu=18gb
+#SBATCH --time=7-1:00:00
+#SBATCH --mail-user=tcm0036@auburn.edu
+#SBATCH --mail-type=FAIL,END
+#SBATCH --error=err.bpp_%A_%a
+#SBATCH --output=out.bpp_%A_%a
+#SBATCH --array=1-4
+
+NCHAINS=4
+
+COMP_IDX=$(( (SLURM_ARRAY_TASK_ID - 1) / NCHAINS + 1 ))
+CHAIN=$(( (SLURM_ARRAY_TASK_ID - 1) % NCHAINS + 1 ))
+PAIR=$(sed -n "${COMP_IDX}p" comparisons.txt)
+CTRL_BASE="control_files/${PAIR}_ctrl.txt"
+OUTDIR="/scratch/tcm0036/distichus-ddRAD/brevirostris-project/geneflow/mscm/${PAIR}"
+CTRL_TMP="${OUTDIR}/${PAIR}_chain${CHAIN}_ctrl.txt"
+
+cp "$CTRL_BASE" "$CTRL_TMP"
+
+sed -i "s|outfile=.*|outfile=/scratch/tcm0036/distichus-ddRAD/brevirostris-project/geneflow/mscm/${PAIR}/${PAIR}_chain${CHAIN}.txt|" "$CTRL_TMP"
+sed -i "s|mcmcfile=.*|mcmcfile=/scratch/tcm0036/distichus-ddRAD/brevirostris-project/geneflow/mscm/${PAIR}/${PAIR}_chain${CHAIN}_mcmc.txt|" "$CTRL_TMP"
+
+bpp --cfile "$CTRL_TMP" --no-pin
+```
+
+# *A. d. favillarum* - *A. b. wetmorei*
+## Assess run convergence
+```{r}
+library(tidyverse)
+library(coda)
+
+runs <- lapply(list.files(path = "/Users/tannermyers/Dropbox/Distichus_Project/brevirostris-ms/phylo/bpp/favillarum_brevirostris/",
+                            pattern = "_mcmc.txt", full.names = TRUE),
+                function(x){df <- read_table(x, col_names = TRUE)
+                            df <- df[, !colnames(df) %in% "Gen"]  ### Remove generations column
+                            df <- mcmc(df)
+                }
+        )
+chain_data <- mcmc.list(runs)
+```
+
+```{r}
+summary(chain_data)
+### estimate sample size adjusted for autocorrelation
+effectiveSize(chain_data)
+### estimate potential scale reduction factor (PSRF) for each parameter
+### When upper limit is close to 1, convergence has been reached
+gelman.diag(chain_data)
+gelman.plot(chain_data)
+
+# png("/Users/tannermyers/Dropbox/Apps/Overleaf/distichus_tree/supplemental/supp-figs/favillarum_brevirostris_traceplots.png", width = 8, height = 10, units = "in", res = 300)
+# par(mfrow = c(4, 2))
+traceplot(chain_data)
+# dev.off()
+```
+
+```{r}
+library(KernSmooth)
+
+# Function to compute Savage-Dickey BF
+savage_dickey_bf <- function(posterior_samples, prior_shape, prior_rate, epsilon = 0.01) {
+    
+    # Prior density at epsilon: M ~ G(shape, rate)
+    prior_at_eps <- dgamma(epsilon, shape = prior_shape, rate = prior_rate)
+    
+    # If all posterior samples exceed epsilon, BF -> Inf
+    if (all(posterior_samples > epsilon)) {
+        return(Inf)
+    }
+    
+    # Otherwise estimate posterior density at epsilon using KDE
+    kde <- bkde(posterior_samples)
+    post_at_eps <- approx(kde$x, kde$y, xout = epsilon)$y
+    
+    # BF10 = prior density / posterior density at epsilon
+    BF10 <- prior_at_eps / post_at_eps
+    
+    return(BF10)
+}
+
+# Load and combine chains for a given comparison
+# (after trimming to common number of samples and confirming convergence)
+combined_favbrev <- do.call(rbind, lapply(runs, as.data.frame))
+hpd <- HPDinterval(as.mcmc(combined_favbrev), prob = 0.95)
+hpd
+
+summary(combined_favbrev$`M_adf->ab`)
+summary(combined_favbrev$`M_ab->adf`)
+
+# Compute BF for each migration direction
+# migprior = 0.1 10 means G(shape=0.1, rate=10)
+adf_ab <- savage_dickey_bf(combined_favbrev$`M_adf->ab`, 
+                                   prior_shape = 0.1, 
+                                   prior_rate = 10)
+
+ab_adf <- savage_dickey_bf(combined_favbrev$`M_ab->adf`, 
+                                   prior_shape = 0.1, 
+                                   prior_rate = 10)
+
+cat("BF10 (favillarum -> brevirostris):", adf_ab, "\n")
+cat("BF10 (brevirostris -> favillarum):", ab_adf, "\n")
+cat("favillarum -> brevirostris supported:", adf_ab > 20, "\n")
+cat("brevirostris -> favillarum supported:", ab_adf > 20, "\n")
+```
+
+# *A. d. ravitergum* - *A. b. deserticola*
+## Assess run convergence
+```{r}
+runs <- lapply(list.files(path = "/Users/tannermyers/Dropbox/Distichus_Project/brevirostris-ms/phylo/bpp/ravitergum_brevirostris/",
+                            pattern = "_mcmc.txt", full.names = TRUE),
+                function(x){df <- read_table(x, col_names = TRUE) 
+                            #        , n_max = 200000) ### if truncating to accommodate unfinished runs
+                            df <- df[, !colnames(df) %in% "Gen"]  ### Remove generations column
+                            df <- mcmc(df)
+                }
+        )
+chain_data <- mcmc.list(runs)
+```
+
+```{r}
+### Visualize mcmc diagnostics
+summary(chain_data)
+### estimate sample size adjusted for autocorrelation
+effectiveSize(chain_data)
+### estimate potential scale reduction factor (PSRF) for each parameter
+### When upper limit is close to 1, convergence has been reached
+gelman.diag(chain_data)
+gelman.plot(chain_data)
+
+# png("/Users/tannermyers/Dropbox/Apps/Overleaf/distichus_tree/supplemental/supp-figs/ravitergum_brevirostris_traceplots.png", width = 8, height = 10, units = "in", res = 300)
+# par(mfrow = c(4, 2))
+traceplot(chain_data)
+# dev.off()
+```
+
+```{r}
+# Load and combine chains for a given comparison
+# (after trimming to common number of samples and confirming convergence)
+combined_ravbrev <- do.call(rbind, lapply(runs, as.data.frame))
+hpd <- HPDinterval(as.mcmc(combined_ravbrev), prob = 0.95)
+hpd
+
+summary(combined_ravbrev$`M_adr->ab`)
+summary(combined_ravbrev$`M_ab->adr`)
+
+
+# Compute BF for each migration direction
+# migprior = 0.1 10 means G(shape=0.1, rate=10)
+adr_ab <- savage_dickey_bf(combined_ravbrev$`M_adr->ab`, 
+                                   prior_shape = 0.1, 
+                                   prior_rate = 10)
+
+ab_adr <- savage_dickey_bf(combined_ravbrev$`M_ab->adr`, 
+                                   prior_shape = 0.1, 
+                                   prior_rate = 10)
+
+cat("BF10 (ravitergum -> brevirostris):", adr_ab, "\n")
+cat("BF10 (brevirostris -> ravitergum):", ab_adr, "\n")
+cat("ravitergum -> brevirostris supported:", adr_ab > 20, "\n")
+cat("brevirostris -> ravitergum supported:", ab_adr > 20, "\n")
+```
+
+# West *A. d. ignigularis* - *A. b. deserticola*
+
+## Assess run convergence
+```{r}
+runs <- lapply(list.files(path = "/Users/tannermyers/Dropbox/Distichus_Project/brevirostris-ms/phylo/bpp/ignigularis_brevirostris/",
+                            pattern = "_mcmc.txt", full.names = TRUE),
+                function(x){df <- read_table(x, col_names = TRUE)
+                            df <- df[, !colnames(df) %in% "Gen"]  ### Remove generations column
+                            df <- mcmc(df)
+                }
+        )
+chain_data <- mcmc.list(runs)
+```
+
+```{r}
+### Visualize mcmc diagnostics
+summary(chain_data)
+### estimate sample size adjusted for autocorrelation
+effectiveSize(chain_data)
+### estimate potential scale reduction factor (PSRF) for each parameter
+### When upper limit is close to 1, convergence has been reached
+gelman.diag(chain_data)
+gelman.plot(chain_data)
+
+# png("/Users/tannermyers/Dropbox/Apps/Overleaf/distichus_tree/supplemental/supp-figs/ignigularis_brevirostris_traceplots.png", width = 8, height = 10, units = "in", res = 300)
+# par(mfrow = c(4, 2))
+traceplot(chain_data)
+# dev.off()
+```
+
+```{r}
+combined_brevign <- do.call(rbind, lapply(runs, as.data.frame))
+hpd <- HPDinterval(as.mcmc(combined_brevign), prob = 0.95)
+hpd
+
+summary(combined_brevign$`M_ign->ab`)
+summary(combined_brevign$`M_ab->ign`)
+
+
+# Compute BF for each migration direction
+# migprior = 0.1 10 means G(shape=0.1, rate=10)
+ign_ab <- savage_dickey_bf(combined_brevign$`M_ign->ab`, 
+                                   prior_shape = 0.1, 
+                                   prior_rate = 10)
+
+ab_ign <- savage_dickey_bf(combined_brevign$`M_ab->ign`, 
+                                   prior_shape = 0.1, 
+                                   prior_rate = 10)
+
+cat("BF10 (ignigularis -> brevirostris):", ign_ab, "\n")
+cat("BF10 (brevirostris -> ignigularis):", ab_ign, "\n")
+cat("ignigularis -> brevirostris supported:", ign_ab > 20, "\n")
+cat("brevirostris -> ignigularis supported:", ab_ign > 20, "\n")
+```
+
+# *A. d. ravitergum* - *A. d. ignigularis*
+## Assess run convergence
+```{r}
+runs <- lapply(list.files(path = "/Users/tannermyers/Dropbox/Distichus_Project/brevirostris-ms/phylo/bpp/ravitergum_ignigularis/",
+                            pattern = "_mcmc.txt", full.names = TRUE),
+                function(x){df <- read_table(x, col_names = TRUE)
+                            df <- df[, !colnames(df) %in% "Gen"]  ### Remove generations column
+                            df <- mcmc(df)
+                }
+        )
+chain_data <- mcmc.list(runs)
+```
+
+```{r}
+summary(chain_data)
+### estimate sample size adjusted for autocorrelation
+effectiveSize(chain_data)
+### estimate potential scale reduction factor (PSRF) for each parameter
+### When upper limit is close to 1, convergence has been reached
+gelman.diag(chain_data)
+gelman.plot(chain_data)
+
+# png("/Users/tannermyers/Dropbox/Apps/Overleaf/distichus_tree/supplemental/supp-figs/ignigularis_ravitergum_traceplots.png", width = 8, height = 10, units = "in", res = 300)
+# par(mfrow = c(4, 2))
+traceplot(chain_data)
+# dev.off()
+```
+
+```{r}
+combined_ignrav <- do.call(rbind, lapply(runs, as.data.frame))
+hpd <- HPDinterval(as.mcmc(combined_ignrav), prob = 0.95)
+hpd
+
+summary(combined_ignrav$`M_ign->rav`)
+summary(combined_ignrav$`M_rav->ign`)
+
+
+# Compute BF for each migration direction
+# migprior = 0.1 10 means G(shape=0.1, rate=10)
+ign_rav <- savage_dickey_bf(combined_ignrav$`M_ign->rav`, 
+                                   prior_shape = 0.1, 
+                                   prior_rate = 10)
+
+rav_ign <- savage_dickey_bf(combined_ignrav$`M_rav->ign`, 
+                                   prior_shape = 0.1, 
+                                   prior_rate = 10)
+
+cat("BF10 (ignigularis -> ravitergum):", ign_rav, "\n")
+cat("BF10 (ravitergum -> ignigularis):", rav_ign, "\n")
+cat("ignigularis -> ravitergum supported:", ign_rav > 20, "\n")
+cat("ravitergum -> ignigularis supported:", rav_ign > 20, "\n")
+```
+
+# East and West *A. d. dominicensis*
+## Assess run convergence
+```{r}
+runs <- lapply(list.files(path = "/Users/tannermyers/Dropbox/Distichus_Project/brevirostris-ms/phylo/bpp/east_west_dominicensis/",
+                            pattern = "_mcmc.txt", full.names = TRUE),
+                function(x){df <- read_table(x, col_names = TRUE)
+                            df <- df[, !colnames(df) %in% "Gen"]  ### Remove generations column
+                            df <- mcmc(df)
+                }
+        )
+chain_data <- mcmc.list(runs)
+```
+
+```{r}
+summary(chain_data)
+### estimate sample size adjusted for autocorrelation
+effectiveSize(chain_data)
+### estimate potential scale reduction factor (PSRF) for each parameter
+### When upper limit is close to 1, convergence has been reached
+gelman.diag(chain_data)
+gelman.plot(chain_data)
+
+# png("/Users/tannermyers/Dropbox/Apps/Overleaf/distichus_tree/supplemental/supp-figs/east_west_dominicensis_traceplots.png", width = 8, height = 10, units = "in", res = 300)
+# par(mfrow = c(4, 2))
+traceplot(chain_data)
+# dev.off()
+```
+
+```{r}
+lapply(runs, summary)
+
+dom_EW <- data.frame(
+    M_domEW_high = c(runs[[1]][, "M_domE->domW"],
+            runs[[2]][, "M_domE->domW"],
+            runs[[3]][, "M_domW->domE"],
+            runs[[4]][, "M_domW->domE"]),
+    M_domEW_low  = c(runs[[1]][, "M_domW->domE"],
+            runs[[2]][, "M_domW->domE"],
+            runs[[3]][, "M_domE->domW"],
+            runs[[4]][, "M_domE->domW"])
+    )
+```
+
+# East and West *A. d. ignigularis*
+## Assess run convergence
+```{r}
+runs <- lapply(list.files(path = "/Users/tannermyers/Dropbox/Distichus_Project/brevirostris-ms/phylo/bpp/east_west_ignigularis/",
+                            pattern = "_mcmc.txt", full.names = TRUE),
+                function(x){df <- read_table(x, col_names = TRUE)
+                            df <- df[, !colnames(df) %in% "Gen"]  ### Remove generations column
+                            df <- mcmc(df)
+                }
+        )
+chain_data <- mcmc.list(runs)
+```
+
+```{r}
+summary(chain_data)
+### estimate sample size adjusted for autocorrelation
+effectiveSize(chain_data)
+### estimate potential scale reduction factor (PSRF) for each parameter
+### When upper limit is close to 1, convergence has been reached
+gelman.diag(chain_data)
+gelman.plot(chain_data)
+
+# png("/Users/tannermyers/Dropbox/Apps/Overleaf/distichus_tree/supplemental/supp-figs/east_west_ignigularis_traceplots.png", width = 8, height = 10, units = "in", res = 300)
+# par(mfrow = c(4, 2))
+traceplot(chain_data)
+# dev.off()
+```
+
+```{r}
+lapply(runs, summary)
+
+ign_EW <- data.frame(
+    M_ignEW_high = c(runs[[1]][, "M_ignE->ignW"],
+            runs[[2]][, "M_ignE->ignW"],
+            runs[[3]][, "M_ignW->ignE"],
+            runs[[4]][, "M_ignW->ignE"]),
+    M_ignEW_low  = c(runs[[1]][, "M_ignW->ignE"],
+            runs[[2]][, "M_ignW->ignE"],
+            runs[[3]][, "M_ignE->ignW"],
+            runs[[4]][, "M_ignE->ignW"])
+    )
+```
+
+# *A. d. ravitergum* and West *A. d. dominicensis*
+## Assess run convergence
+```{r}
+runs <- lapply(list.files(path = "/Users/tannermyers/Dropbox/Distichus_Project/brevirostris-ms/phylo/bpp/ravitergum_dominicensis/",
+                            pattern = "_mcmc.txt", full.names = TRUE),
+                function(x){df <- read_table(x, col_names = TRUE)
+                            df <- df[, !colnames(df) %in% "Gen"]  ### Remove generations column
+                            df <- mcmc(df)
+                }
+        )
+chain_data <- mcmc.list(runs)
+```
+
+```{r}
+summary(chain_data)
+### estimate sample size adjusted for autocorrelation
+effectiveSize(chain_data)
+### estimate potential scale reduction factor (PSRF) for each parameter
+### When upper limit is close to 1, convergence has been reached
+gelman.diag(chain_data)
+gelman.plot(chain_data)
+
+# png("/Users/tannermyers/Dropbox/Apps/Overleaf/distichus_tree/supplemental/supp-figs/ravitergum_dominicensis_traceplots.png", width = 8, height = 10, units = "in", res = 300)
+# par(mfrow = c(4, 2))
+traceplot(chain_data)
+# dev.off()
+```
+
+```{r}
+combined_ravdom <- do.call(rbind, lapply(runs, as.data.frame))
+hpd <- HPDinterval(as.mcmc(combined_ravdom), prob = 0.95)
+hpd
+
+summary(combined_ravdom$`M_dom->rav`)
+summary(combined_ravdom$`M_rav->dom`)
+ 
+# Compute BF for each migration direction
+# migprior = 0.1 10 means G(shape=0.1, rate=10)
+dom_rav <- savage_dickey_bf(combined_ravdom$`M_dom->rav`, 
+                                    prior_shape = 0.1, 
+                                    prior_rate = 10)
+
+rav_dom <- savage_dickey_bf(combined_ravdom$`M_rav->dom`, 
+                                    prior_shape = 0.1, 
+                                    prior_rate = 10)
+
+cat("BF10 (dominicensis -> ravitergum):", dom_rav, "\n")
+cat("BF10 (ravitergum -> dominicensis):", rav_dom, "\n")
+cat("dominicensis -> ravitergum supported:", dom_rav > 20, "\n")
+cat("ravitergum -> dominicensis supported:", rav_dom > 20, "\n")
+```
+
+# Tiburon *A. distichus* and West *A. d. dominicensis*
+## Assess run convergence
+```{r}
+runs <- lapply(list.files(path = "/Users/tannermyers/Dropbox/Distichus_Project/brevirostris-ms/phylo/bpp/tiburon_west_dominicensis/",
+                            pattern = "_mcmc.txt", full.names = TRUE),
+                function(x){df <- read_table(x, col_names = TRUE)
+                            df <- df[, !colnames(df) %in% "Gen"]  ### Remove generations column
+                            df <- mcmc(df)
+                }
+        )
+chain_data <- mcmc.list(runs)
+```
+
+```{r}
+summary(chain_data)
+### estimate sample size adjusted for autocorrelation
+effectiveSize(chain_data)
+### estimate potential scale reduction factor (PSRF) for each parameter
+### When upper limit is close to 1, convergence has been reached
+gelman.diag(chain_data)
+gelman.plot(chain_data)
+
+# png("/Users/tannermyers/Dropbox/Apps/Overleaf/distichus_tree/supplemental/supp-figs/tiburon_west_dominicensis_traceplots.png", width = 8, height = 10, units = "in", res = 300)
+# par(mfrow = c(4, 2))
+traceplot(chain_data)
+# dev.off()
+```
+
+## Examine convergence with 3/4 chains that appear to converge
+This comparison is interesting--- 3 of the 4 chains appears to be converging while the other also looks stationary but in another region of the posterior entirely. 
+What do the stats for the 3 chains that seem to agree look like?
+```{r}
+lapply(runs, tail)
+lapply(runs, summary)
+### isolate 1st 3 chains
+chain_data <- mcmc.list(runs[1:3])
+
+summary(chain_data)
+### estimate sample size adjusted for autocorrelation
+effectiveSize(chain_data)
+### estimate potential scale reduction factor (PSRF) for each parameter
+### When upper limit is close to 1, convergence has been reached
+gelman.diag(chain_data)
+gelman.plot(chain_data)
+traceplot(chain_data)
+```
+
+```{r}
+combined_domtib <- do.call(rbind, lapply(runs[1:3], as.data.frame))
+hpd <- HPDinterval(as.mcmc(combined_domtib), prob = 0.95)
+hpd
+
+summary(combined_domtib$`M_dom->tib`)
+summary(combined_domtib$`M_tib->dom`)
+ 
+# Compute BF for each migration direction
+# migprior = 0.1 10 means G(shape=0.1, rate=10)
+dom_tib <- savage_dickey_bf(combined_domtib$`M_dom->tib`, 
+                                    prior_shape = 0.1, 
+                                    prior_rate = 10)
+
+tib_dom <- savage_dickey_bf(combined_domtib$`M_tib->dom`, 
+                                    prior_shape = 0.1, 
+                                    prior_rate = 10)
+
+cat("BF10 (west dominicensis -> Tiburon):", dom_tib, "\n")
+cat("BF10 (Tiburon -> west dominicensis):", tib_dom, "\n")
+cat("west dominicensis -> Tiburon supported:", dom_tib > 20, "\n")
+cat("Tiburon -> west dominicensis supported:", tib_dom > 20, "\n")
+```
+
+# *A. d. properus* - East *A. d. ignigularis*
+## Assess run convergence
+```{r}
+runs <- lapply(list.files(path = "/Users/tannermyers/Dropbox/Distichus_Project/brevirostris-ms/phylo/bpp/properus_ignigularis/",
+                            pattern = "_mcmc.txt", full.names = TRUE),
+                function(x){df <- read_table(x, col_names = TRUE)
+                            df <- df[, !colnames(df) %in% "Gen"]  ### Remove generations column
+                            df <- mcmc(df)
+                }
+        )
+chain_data <- mcmc.list(runs)
+```
+
+```{r}
+summary(chain_data)
+### estimate sample size adjusted for autocorrelation
+effectiveSize(chain_data)
+### estimate potential scale reduction factor (PSRF) for each parameter
+### When upper limit is close to 1, convergence has been reached
+gelman.diag(chain_data)
+gelman.plot(chain_data)
+
+# png("/Users/tannermyers/Dropbox/Apps/Overleaf/distichus_tree/supplemental/supp-figs/properus_ignigularis_traceplots.png", width = 8, height = 10, units = "in", res = 300)
+# par(mfrow = c(4, 2))
+traceplot(chain_data)
+# dev.off()
+```
+
+While convergence was not reached, we have what appears to be label switching, with two chains achieving stationarity in one region of the posterior and the other two chains achieving stationarity in another region of the posterior in each direction. 
+Chains 1 and 3 suggest migration is higher in the ignigularis -> properus direction (*M* ~ 0.8) and lower in the properus -> ignigularis (*M* ~ 0.2) direction, while chains 2 and 4 suggest the opposite.
+
+```{r}
+lapply(runs, summary)
+
+run_ids <- c(1, 3, 2, 4)
+prop_ign <- data.frame(
+    M_ignprop_high = c(runs[[1]][, "M_ign->prop"],
+            runs[[3]][, "M_ign->prop"],
+            runs[[2]][, "M_prop->ign"],
+            runs[[4]][, "M_prop->ign"]),
+    M_ignprop_low  = c(runs[[2]][, "M_ign->prop"],
+            runs[[4]][, "M_ign->prop"],
+            runs[[1]][, "M_prop->ign"],
+            runs[[3]][, "M_prop->ign"])
+    )
+```
+
+# *A. b. deserticola* - *A. b. wetmorei*
+## Assess run convergence
+```{r}
+runs <- lapply(list.files(path = "/Users/tannermyers/Dropbox/Distichus_Project/brevirostris-ms/phylo/bpp/brevirostris_wetmorei_deserticola/",
+                            pattern = "_mcmc.txt", full.names = TRUE),
+                function(x){df <- read_table(x, col_names = TRUE)
+                            df <- df[, !colnames(df) %in% "Gen"]  ### Remove generations column
+                            df <- mcmc(df)
+                }
+        )
+chain_data <- mcmc.list(runs)
+```
+
+```{r}
+summary(chain_data)
+### estimate sample size adjusted for autocorrelation
+effectiveSize(chain_data)
+### estimate potential scale reduction factor (PSRF) for each parameter
+### When upper limit is close to 1, convergence has been reached
+gelman.diag(chain_data)
+gelman.plot(chain_data)
+
+# png("/Users/tannermyers/Dropbox/Apps/Overleaf/distichus_tree/supplemental/supp-figs/brevirostris_wetmorei_deserticola_traceplots.png", width = 8, height = 10, units = "in", res = 300)
+# par(mfrow = c(4, 2))
+traceplot(chain_data)
+# dev.off()
+```
+
+```{r}
+combined_wetdes <- do.call(rbind, lapply(runs, as.data.frame))
+hpd <- HPDinterval(as.mcmc(combined_wetdes), prob = 0.95)
+hpd
+
+summary(combined_wetdes$`M_des->wet`)
+summary(combined_wetdes$`M_wet->des`)
+
+wet_des <- savage_dickey_bf(combined_wetdes$`M_wet->des`, 
+                                    prior_shape = 0.1, 
+                                    prior_rate = 10)
+
+des_wet <- savage_dickey_bf(combined_wetdes$`M_des->wet`, 
+                                    prior_shape = 0.1, 
+                                    prior_rate = 10)
+
+cat("BF10 (wetmorei -> deserticola):", wet_des, "\n")
+cat("BF10 (deserticola -> wetmorei):", des_wet, "\n")
+cat("wetmorei -> deserticola supported:", wet_des > 20, "\n")
+cat("deserticola -> wetmorei supported:", des_wet > 20, "\n")
+```
+
+# East *A. d. dominicensis* and East *A. d. ignigularis*
+
+## Assess run convergence
+```{r}
+runs <- lapply(list.files(path = "/Users/tannermyers/Dropbox/Distichus_Project/brevirostris-ms/phylo/bpp/east_dominicensis_ignigularis/",
+                            pattern = "_mcmc.txt", full.names = TRUE),
+                function(x){df <- read_table(x, col_names = TRUE)
+                            df <- df[, !colnames(df) %in% "Gen"]  ### Remove generations column
+                            df <- mcmc(df)
+                }
+        )
+chain_data <- mcmc.list(runs)
+```
+
+```{r}
+summary(chain_data)
+### estimate sample size adjusted for autocorrelation
+effectiveSize(chain_data)
+### estimate potential scale reduction factor (PSRF) for each parameter
+### When upper limit is close to 1, convergence has been reached
+gelman.diag(chain_data)
+gelman.plot(chain_data)
+
+# png("/Users/tannermyers/Dropbox/Apps/Overleaf/distichus_tree/supplemental/supp-figs/east_dominicensis_ignigularis_traceplots.png", width = 8, height = 10, units = "in", res = 300)
+# par(mfrow = c(4, 2))
+traceplot(chain_data)
+# dev.off()
+```
+
+```{r}
+combined_domign <- do.call(rbind, lapply(runs, as.data.frame))
+hpd <- HPDinterval(as.mcmc(combined_domign), prob = 0.95)
+hpd
+
+summary(combined_domign$`M_ign->dom`)
+summary(combined_domign$`M_dom->ign`)
+ 
+# Compute BF for each migration direction
+# migprior = 0.1 10 means G(shape=0.1, rate=10)
+dom_ign <- savage_dickey_bf(combined_domign$`M_dom->ign`, 
+                                    prior_shape = 0.1, 
+                                    prior_rate = 10)
+
+ign_dom <- savage_dickey_bf(combined_domign$`M_ign->dom`, 
+                                    prior_shape = 0.1, 
+                                    prior_rate = 10)
+
+cat("BF10 (east dominicensis -> ignigularis):", dom_ign, "\n")
+cat("BF10 (ignigularis -> east dominicensis):", ign_dom, "\n")
+cat("east dominicensis -> ignigularis supported:", dom_ign > 20, "\n")
+cat("ignigularis -> east dominicensis supported:", ign_dom > 20, "\n")
+```
+
+# Visualize migration rates as heatmap
+
+```{r, fig.width = 9, fig.height = 9, echo = FALSE, evaluate = FALSE}
+library(ggnewscale)
+library(viridis)
+
+comps <- list(combined_favbrev, combined_ravbrev, combined_brevign,
+        combined_ignrav, combined_domtib, combined_ravdom, combined_wetdes,
+        combined_domign)
+
+### fix this to accommodate direction-less aggregated comparisons
+comp_simple <- imap_dfr(comps, function(x, name){
+        x %>%
+            dplyr::select(starts_with("M_")) %>%
+            pivot_longer(
+            everything(),
+            names_to = "direction",
+            values_to = "migration_rate"
+            ) %>%
+            mutate(direction = str_remove(direction, "^M_")) %>%
+            separate(direction, into = c("from", "to"), sep = "->") %>%
+            mutate(run = name)
+    }
+)
+
+### Given taxon names more informative names for visualization
+comp_simple$from[comp_simple$from == "adr" ] <- "rav"
+comp_simple$to[comp_simple$to == "adr" ] <- "rav"
+comp_simple <- comp_simple %>%
+    # filter(!(from == "adf" & to == "ab")) %>%
+    mutate(
+    from = case_when(
+        run == 1 & from == "ab" ~ "wet",
+        run %in% c(2, 3) & from == "ab" ~ "des",
+        run %in% c(5, 6) & from == "dom" ~ "w_dom",
+        run == 8 & from == "dom" ~ "e_dom",
+        run == 8 & from == "ign" ~ "e_ign",
+        run %in% c(3, 4) & from == "ign" ~ "w_ign",
+        TRUE ~ from),
+    to = case_when(
+        run == 1 & to == "ab" ~ "wet",
+        run %in% c(2, 3) & to == "ab" ~ "des",
+        run %in% c(5, 6)& to == "dom" ~ "w_dom",
+        run == 8 & to == "dom" ~ "e_dom",
+        run == 8 & to == "ign" ~ "e_ign",
+        run %in% c(3, 4) & to == "ign" ~ "w_ign",
+        TRUE ~ to)
+        )
+
+taxon_lookup <- c(
+    "adf" = "A. d. favillarum",
+    "wet" = "A. b. wetmorei",
+    "des"  = "A. b. deserticola",
+    "rav" = "A. d. ravitergum",
+    "w_ign" = "A. d. ignigularis (west)",
+    "e_ign" = "A. d. ignigularis (east)",
+    "w_dom" = "A. d. dominicensis (west)",
+    "e_dom" = "A. d. dominicensis (east)",
+    "tib" = "Tiburon A. distichus subspecies",
+    "prop" = "A. d. properus"
+)
+
+comp_simple <- comp_simple %>%
+  mutate(
+    from = recode(from, !!!taxon_lookup),
+    to   = recode(to,   !!!taxon_lookup)
+  )
+
+mean_rates <- comp_simple %>% group_by(from, to) %>%
+    summarise(mean_M = mean(migration_rate), .groups = "drop") %>%
+    mutate(status = "tested")
+
+### Drop directions found to have BF10 < 20
+### favillarum -> brevirostris
+taxon_order <- sort(unique(c(mean_rates$from, mean_rates$to)))
+mean_rates <- mean_rates %>%
+    complete(from = taxon_order, to = taxon_order,
+             fill = list(status = "not_tested")) %>%
+    mutate(
+        from = factor(from, levels = taxon_order),
+        to   = factor(to,   levels = taxon_order),
+        status = if_else(from == "A. d. favillarum" & to == "A. b. wetmorei",
+                          "non_significant", status),
+        status = if_else(as.character(from) == as.character(to), "diagonal", status),
+        mean_M = if_else(status %in% c("non_significant", "diagonal"), NA_real_, mean_M)
+    )
+
+ggplot() +
+    # background layer: non-significant / not-tested / diagonal, categorical fill
+    geom_tile(
+        data = mean_rates %>% filter(status != "tested"),
+        aes(x = to, y = from, fill = status),
+        color = "grey50",      # visible grid lines between all tiles
+        linewidth = 0.3
+    ) +
+    scale_fill_manual(
+        values = c(
+        "not_tested"       = "white",
+        "non_significant"  = "black",
+        "diagonal"         = "gray70"
+        ),
+        name = NULL,
+        guide = "none"
+    ) +
+    new_scale_fill() +
+    # foreground layer: actual measured, significant rates, continuous fill
+    geom_tile(
+        data = mean_rates %>% filter(status == "tested"),
+        aes(x = to, y = from, fill = mean_M),
+        color = "grey50",      # same border treatment for consistency
+        linewidth = 0.3
+    ) +
+    scale_fill_viridis_c(name = "Migration rate (M)") +
+    # print the estimate in white text on top of significant (colored) tiles
+    geom_text(
+        data = mean_rates %>% filter(status == "tested"),
+        aes(x = to, y = from, label = round(mean_M, 3)),
+        color = "white",
+        size = 3
+    ) +
+    labs(x = "Recipient", y = "Donor") +
+    coord_fixed() +
+    theme_bw() +
+    theme(
+        axis.text.x = element_text(angle = 45, hjust = 1, face = "italic"),
+        axis.text.y = element_text(face = "italic")
+    )
+```
+
+```{r, echo = FALSE, fig.width = 8, fig.height = 8}
+knitr::include_graphics("/Users/tannermyers/Dropbox/Distichus_Project/brevirostris-ms/figures/mean-migration-rates.pdf")
+```
+
+# Visualize migration rate distiributions for each comparison
+
+```{r, fig.width = 12, fig.height = 4}
+### need to add prop_ign, ign_EW, and dom_EW comparisons
+comps <- c(comps, list(prop_ign, dom_EW, ign_EW))
+names(comps) <- c("favbrev", "ravbrev", "brevign", "ignrav", "domtib", "ravdom", "wetdes", "domign" , "propign", "domEW", "ignEW")
+
+m_summary <- imap_dfr(comps, function(x, run_name) {
+    x %>%
+        dplyr::select(starts_with("M_")) %>%
+        pivot_longer(everything(), names_to = "direction", values_to = "migration_rate") %>%
+        mutate(direction = str_remove(direction, "^M_")) %>%
+        group_by(direction) %>%
+        summarise(
+        mean_M   = mean(migration_rate),
+        median_M = median(migration_rate),
+        lower95  = quantile(migration_rate, 0.025),
+        upper95  = quantile(migration_rate, 0.975),
+        .groups = "drop"
+        ) %>%
+        mutate(run = run_name)
+})
+
+direction_order <- c("ab->adf", "ab->adr", "adr->ab", "ab->ign", "ign->ab", ### distichus -- brevirostris comparisons
+        "wet->des", "des->wet", ### just brevirostris
+        "dom->rav", "rav->dom", "rav->ign", "ign->rav", "dom->tib", "tib->dom", ### all distichus
+        "domEW_low", "domEW_high", "ign->dom", "dom->ign",    
+        "ignEW_low", "ignEW_high", "ignprop_low", "ignprop_high")
+
+plt_data <- m_summary %>%
+    filter(direction %in% direction_order) %>%
+    mutate(direction = factor(direction, levels = direction_order))
+
+brev_dist <- c("ab->adf", "ab->adr", "adr->ab", "ab->ign", "ign->ab")
+distichus <- c("dom->rav", "rav->dom", "rav->ign", "ign->rav", "dom->tib", "tib->dom",
+        "domEW_low", "domEW_high", "ign->dom", "dom->ign",    
+        "ignEW_low", "ignEW_high", "ignprop_low", "ignprop_high") 
+brev <- c("wet->des", "des->wet")
+
+abad <- which(levels(plt_data$direction) %in% brev_dist)
+ab <- which(levels(plt_data$direction) %in% brev)
+ad <- which(levels(plt_data$direction) %in% distichus)
+
+ggplot(plt_data, aes(x = direction, y = median_M)) +
+    annotate("rect",
+             xmin = abad - 0.5, xmax = abad + 0.5,
+             ymin = -Inf, ymax = Inf,
+             fill = "#E8782A", alpha = 0.25) +
+    annotate("rect",
+             xmin = ab - 0.5, xmax = ab + 0.5,
+             ymin = -Inf, ymax = Inf,
+             fill = "#E8DC2A", alpha = 0.15) +
+    annotate("rect",
+             xmin = ad - 0.5, xmax = ad + 0.5,
+             ymin = -Inf, ymax = Inf,
+             fill = "#729C1C", alpha = 0.25) +
+    geom_pointrange(aes(ymin = lower95, ymax = upper95)) +
+    labs(x = "Migration pair", y = "Migration rate (M)") +
+    theme_bw() +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+# ggsave("~/Dropbox/Apps/Overleaf/distichus_tree/figures/fig-components/migration-rate-ranges.pdf", width = 12, height = 4)
+```
+
+# Plot migration rates against F~ST and π
+
+## Fst as dependent variable
+```{r, fig.width = 10, fig.height = 10}
+### Read in population-level Fst estimates
+load("/Users/tannermyers/Dropbox/Distichus_Project/brevirostris-ms/snp-analyses/Fsts/full_miss90LD_clade_Fst.RData")
+
+fst_df <- as.data.frame(as.table(distichus_clade_Fsts$Fsts))
+fst_df <- fst_df[!is.na(fst_df$Freq), ]
+colnames(fst_df) <- c("pop1", "pop2", "Fst")
+
+### drop irrelevant taxa for migration rate comparisons
+fst_df <- fst_df %>%
+      filter(!(pop1 %in% c("websteri", "caudalis", "marron", "biminiensis",
+                "dapsilis", "distichus", "distichoides", "ocior", "sejunctus") |
+            pop2 %in% c("websteri", "caudalis", "marron", "biminiensis",
+                "dapsilis", "distichus", "distichoides", "ocior", "sejunctus"))) %>%
+        droplevels() %>%
+        bind_rows(rename(., pop1 = pop2, pop2 = pop1))
+
+
+run_lookup <- as_tibble(data.frame(
+                        run = c("favbrev", "ravbrev", "brevign", "ignrav", "domtib", "ravdom",
+                                "wetdes", "domign", "propign", "domEW", "ignEW"),
+                        pop1 = c("favillarum", "ravitergum", "deserticola", "west_ignigularis",
+                                "west_dominicensis", "ravitergum", "wetmorei", "dom2",
+                                "properus", "dom2", "east_ignigularis"),
+                        pop2 = c("wetmorei", "deserticola", "west_ignigularis", "ravitergum",
+                                "tiburon", "west_dominicensis", "deserticola", "east_ignigularis",
+                                "east_ignigularis", "west_dominicensis", "west_ignigularis")
+))
+
+m_plt <- m_summary %>%
+            filter(!(direction %in% c("adf->ab")))%>%
+            left_join(run_lookup, by = "run") %>%
+            left_join(fst_df, by = c("pop1", "pop2")) %>%
+            mutate(comp = ifelse(run %in% c("favbrev", "ravbrev", "brevign"),
+                    "between complex", "within complex"))
+
+
+mig_fst_bt <- lm(formula = mean_M ~ Fst,
+                data = m_plt[m_plt$comp == "between complex",])      
+mig_fst_bt
+summary(mig_fst_bt)
+
+mig_fst_w <- lm(formula = mean_M ~ Fst,
+                data = m_plt[m_plt$comp == "within complex",])
+mig_fst_w
+summary(mig_fst_w)
+
+ggplot(m_plt, aes(x = mean_M, y = Fst, shape = comp, color = comp)) + #, fill = direction)) + 
+        geom_point(size = 4) +
+        geom_smooth(method = "lm", se = FALSE) +
+        # ### Between
+        # geom_abline(slope = coefficients(mig_fst_bt)[2],
+        #             intercept = coefficients(mig_fst_bt)[1],
+        #             color = "#E8782A") + 
+        # ### Within
+        # geom_abline(slope = coefficients(mig_fst_w)[2],
+        #             intercept = coefficients(mig_fst_w)[1],
+        #             color = "#729C1C") +
+        scale_color_manual(values = c("between complex" = "#E8782A",
+                            "within complex" = "#729C1C")) +
+        scale_shape_manual(values = c("between complex" = 17,
+                            "within complex" = 16)) +
+        xlab("Migration rate (M)") + ylab(expression(F[ST])) +
+        annotate("text", x = 0.05, y = 0.65,
+                label = "R^2 == 0.0003 ~ ',' ~ italic(p) == 0.980",
+                hjust = 0, size = 5, parse = TRUE) +
+        annotate("text", x = 0.4, y = 0.15,
+                label = "R^2 == 0.2668 ~ ',' ~ italic(p) == 0.0405",
+                hjust = 0, size = 5, parse = TRUE) +
+        # guides(fill = guide_legend(override.aes = list(shape = 21))) + 
+        theme_bw() +
+        theme(panel.grid = element_blank(),
+            legend.title = element_blank())
+# ggsave("~/Dropbox/Apps/Overleaf/distichus_tree/supplemental/supp-figs/migration-Fst.pdf", dpi = 300)           
+```
+
+## M as dependent variable
+
+```{r}
+fst_mig_bt <- lm(formula = Fst ~ mean_M,
+                data = m_plt[m_plt$comp == "between complex",])      
+fst_mig_bt
+summary(fst_mig_bt)
+
+fst_mig_w <- lm(formula = Fst ~ mean_M,
+                data = m_plt[m_plt$comp == "within complex",])
+fst_mig_w
+summary(fst_mig_w)
+
+ggplot(m_plt, aes(x = Fst, y =  mean_M, shape = comp, color = comp)) + #, fill = direction)) + 
+        geom_point(size = 4) +
+        geom_smooth(method = "lm", se = FALSE) +
+        # ### Between
+        # geom_abline(slope = coefficients(mig_fst_bt)[2],
+        #             intercept = coefficients(mig_fst_bt)[1],
+        #             color = "#E8782A") + 
+        # ### Within
+        # geom_abline(slope = coefficients(mig_fst_w)[2],
+        #             intercept = coefficients(mig_fst_w)[1],
+        #             color = "#729C1C") +
+        scale_color_manual(values = c("between complex" = "#E8782A",
+                            "within complex" = "#729C1C")) +
+        scale_shape_manual(values = c("between complex" = 17,
+                            "within complex" = 16)) +
+        ylab("Migration rate (M)") + xlab(expression(F[ST])) +
+        annotate("text", x = 0.05, y = 0.5,
+                label = "R^2 == 0.2668 ~ ',' ~ italic(p) == 0.0405",
+                hjust = 0, size = 5, parse = TRUE) +
+        annotate("text", x = 0.6, y = 0.15,
+                label = "R^2 == 0.0003 ~ ',' ~ italic(p) == 0.980",
+                hjust = 0, size = 5, parse = TRUE) +
+        # guides(fill = guide_legend(override.aes = list(shape = 21))) + 
+        theme_bw() +
+        theme(panel.grid = element_blank(),
+            legend.title = element_blank())
+# ggsave("~/Dropbox/Apps/Overleaf/distichus_tree/figures/fig-components/Fst-migration.pdf", dpi = 300)
+```
+
+## π
+```{r}
+pi_clades <- read_table("/Users/tannermyers/Dropbox/Distichus_Project/brevirostris-ms/bioinformatics/stacks/fstats_output/mscM_clades/populations.sumstats_summary.tsv",
+                            col_names = FALSE, comment = "#", skip = 26) 
+colnames(pi_clades) <- c("pop1", "Private", "Sites", "Variant_Sites", "Polymorphic_Sites", "%Polymorphic_Loci",
+                        "Num_Indv", "Var", "StdErr", "P", "Var", "StdErr", "Obs_Het", "Var", "StdErr", "Obs_Hom",
+                        "Var", "StdErr", "Exp_Het", "Var", "StdErr", "Exp_Hom", "Var", "StdErr", "Pi", "Var",
+                        "StdErr", "Fis", "Var", "StdErr")
+
+pi_clades <- pi_clades %>% dplyr::select(pop1, Pi)
+
+m_plt <- m_plt %>%
+        left_join(
+            pi_clades %>%
+                dplyr::rename(Pi.pop1 = Pi),
+            by = c("pop1" = "pop1")
+        ) %>%
+        left_join(
+            pi_clades %>%
+                dplyr::rename(Pi.pop2 = Pi),
+            by = c("pop2" = "pop1")
+        )
+m_plt
+
+pi_mig_bt <- lm(formula = Pi ~ mean_M,
+                data = m_plt[m_plt$comp == "between complex",])      
+pi_mig_bt
+summary(pi_mig_bt)
+
+pi_mig_w <- lm(formula = Pi ~ mean_M,
+                data = m_plt[m_plt$comp == "within complex",])
+pi_mig_w
+summary(pi_mig_w)
+
+ggplot(m_plt, aes(x = Pi, y =  mean_M, shape = comp, color = comp)) + #, fill = direction)) + 
+        geom_point(size = 4) +
+        # geom_text(data = m_plt, aes(label = direction)) +
+        geom_smooth(method = "lm", se = FALSE) +
+        scale_color_manual(values = c("between complex" = "#E8782A",
+                            "within complex" = "#729C1C")) +
+        scale_shape_manual(values = c("between complex" = 17,
+                            "within complex" = 16)) +
+        ylab("Migration rate (M)") + xlab(expression(F[ST])) +
+        # annotate("text", x = 0.05, y = 0.5,
+        #         label = "R^2 == 0.2668 ~ ',' ~ italic(p) == 0.0405",
+        #         hjust = 0, size = 5, parse = TRUE) +
+        # annotate("text", x = 0.6, y = 0.15,
+        #         label = "R^2 == 0.0003 ~ ',' ~ italic(p) == 0.980",
+        #         hjust = 0, size = 5, parse = TRUE) +
+        theme_bw() +
+        theme(panel.grid = element_blank(),
+            legend.title = element_blank())
+```
+
+# Software environment
+```{r}
+sessionInfo()
+```
