@@ -1,0 +1,27 @@
+seed=-1
+seqfile = /home/tcm0036/distichus-ddRAD/brevirostris-ms/scripts/geneflow/sequences/tiburon_west_dominicensis_bpp.phy
+Imapfile = /home/tcm0036/distichus-ddRAD/brevirostris-ms/scripts/geneflow/imaps/tiburon_west_dominicensis_Imap.txt
+outfile = /scratch/tcm0036/distichus-ddRAD/brevirostris-project/geneflow/mscm/tiburon_west_dominicensis/tiburon_west_dominicensis.txt
+mcmcfile = /scratch/tcm0036/distichus-ddRAD/brevirostris-project/geneflow/mscm/tiburon_west_dominicensis/tiburon_west_dominicensis.mcmc.txt
+speciesdelimitation=0
+speciestree=0
+species&tree=2 dom tib
+                8	11
+                (dom, tib)domtib;
+phase=0 0 
+usedata=1
+nloci=3218 
+locusrate=0
+cleandata=0
+thetaprior= 3 0.002 e
+tauprior= 3 0.01
+finetune=1
+print=1 0 0 0
+burnin=20000
+sampfreq=2
+nsample=400000
+threads=2 1 1
+migprior=0.1 10
+migration = 2
+        tib dom
+        dom tib

@@ -1,0 +1,28 @@
+seed=-1
+seqfile = /home/tcm0036/distichus-ddRAD/brevirostris-ms/scripts/geneflow/sequences/ignigularis_brevirostris_bpp.phy
+Imapfile = /home/tcm0036/distichus-ddRAD/brevirostris-ms/scripts/geneflow/imaps/ignigularis_brevirostris_Imap.txt
+outfile = /scratch/tcm0036/distichus-ddRAD/brevirostris-project/geneflow/mscm/ignigularis_brevirostris/ignigularis_brevirostris.txt
+mcmcfile = /scratch/tcm0036/distichus-ddRAD/brevirostris-project/geneflow/mscm/ignigularis_brevirostris/ignigularis_brevirostris.mcmc.txt
+speciesdelimitation=0
+speciestree=0
+species&tree=2 ab ign
+				9	8		
+				(ab, ign)Ad;
+phase=0 0 
+usedata=1
+nloci=
+locusrate=0
+cleandata=0
+thetaprior= 3 0.002 e
+tauprior= 3 0.01
+finetune=1
+print=1 0 0 0
+burnin=20000
+sampfreq=2
+nsample=400000
+threads=2 1 1
+migprior=0.1 10
+migration = 2
+        ab ign
+		ign ab
+checkpoint=100000 50000
