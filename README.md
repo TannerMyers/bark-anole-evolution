@@ -1,7 +1,7 @@
 # Evolutionary history of the *Anolis distichus* species group
 
 This repository contains the code necessary to reproduce the results of Myers et al. *Adaptive signal evolution and gene flow drive variable
-speciation outcomes in Hispaniolan bark anoles*.
+speciation outcomes in bark anoles*.
 
 ## Bioinformatics
 
