@@ -19,7 +19,7 @@ speciation outcomes in bark anoles*.
 
 | Mitochondrial DNA phylogeny | [scripts/mtdna.Rmd](scripts/mtdna.Rmd) | [HTML](https://TannerMyers.github.io/bark-anole-evolution/mtdna.html) |
 
-| Sex chromosome--autosome discordance | [scripts/Pairwise-Fst-IBD.Rmd](scripts/y_chromosome_analyses.Rmd) | [HTML](https://TannerMyers.github.io/bark-anole-evolution/y_chromosome_analyses.html) |
+| Sex chromosome--autosome discordance | [scripts/y_chromosome_analyses.Rmd](scripts/y_chromosome_analyses.Rmd) | [HTML](https://TannerMyers.github.io/bark-anole-evolution/y_chromosome_analyses.html) |
 
 | Species tree inference with `SVDquartets` | [scripts/svdquartets.rmd](scripts/svdquartets.rmd) | [HTML](https://TannerMyers.github.io/bark-anole-evolution/svdquartets.html) |
 
