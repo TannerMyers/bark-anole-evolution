@@ -1,0 +1,599 @@
+---
+title: "*Anolis distichus* Species Group ddRADseq Sampling & Population Structure"
+author: "Tanner Myers"
+output:
+  rmdformats::html_clean:
+    highlight: kate
+---
+
+# Filter ddRADseq SNP data
+```{bash, eval = FALSE}
+#! /usr/bin/env bash
+#SBATCH --mail-type=FAIL,END
+#SBATCH --mail-user=tcm0036@auburn.edu
+#SBATCH --partition=jro0014_amd
+#SBATCH --mem=32G
+#SBATCH --error=snpfilt_%j.err
+#SBATCH --output=snpfilt_%j.out
+#SBATCH --time=24:00:00
+#SBATCH --job-name=SNPFilter
+
+## Load conda env with bcftools
+source ~/mambaforge/etc/profile.d/conda.sh
+conda activate genomics_env
+
+VCF=/scratch/tcm0036/distichus-ddRAD/brevirostris-project/stacks/populations/populations.snps.vcf
+CLEAN=/scratch/tcm0036/distichus-ddRAD/brevirostris-project/bcftools/dropped_samples.vcf.gz
+VCF50=/scratch/tcm0036/distichus-ddRAD/brevirostris-project/bcftools/full_miss50_snps.vcf.gz
+VCF90=/scratch/tcm0036/distichus-ddRAD/brevirostris-project/bcftools/full_miss90_snps.vcf.gz
+OUT_DIR=/scratch/tcm0036/distichus-ddRAD/brevirostris-project/bcftools
+INDMISS=/scratch/tcm0036/distichus-ddRAD/brevirostris-project/bcftools/missingness_per_ind.txt
+
+
+### Calculate missingness per specimen
+paste \
+<(bcftools query -f '[%SAMPLE\t]\n' $VCF | head -1 | tr '\t' '\n') \
+<(bcftools query -f '[%GT\t]\n' $VCF | awk -v OFS="\t" '{for (i=1;i<=NF;i++) if ($i == "./.") sum[i]+=1 } END {for (i in sum) print i, sum[i] / NR }' | sort -k1,1n | cut -f 2) > $INDMISS
+
+### Drop specimens with > 
+bcftools view -S ^<(paste <(bcftools query -f '[%SAMPLE\t]\n' $VCF | head -1 | tr '\t' '\n') <(bcftools query -f '[%GT\t]\n' $VCF | awk -v OFS="\t" '{for (i=1;i<=NF;i++) if ($i == "./.") sum[i]+=1 } END {for (i in sum) print i, sum[i] / NR }' | sort -k1,1n | cut -f 2) | awk '{ if ($2 > 0.85) print $1 }') $VCF | bgzip > $CLEAN
+
+### Filter SNPs for depth, missingness (50%), quality, and minor alleles
+bcftools filter -i 'FORMAT/DP > 5' $CLEAN | \
+#     bcftools filter -e 'FORMAT/DP>1.5*AVG(FORMAT/DP)' | \
+        bcftools filter -e 'F_MISSING > 0.5' | \
+        bcftools view --min-ac 3 -m2 -M2 -v snps |\
+        bcftools sort -O z -o $VCF50
+bcftools index $VCF50
+
+### Filter SNPs for depth, missingness (90%), quality, and minor alleles
+bcftools filter -i 'FORMAT/DP > 5' $CLEAN | \
+#       bcftools filter -e 'FORMAT/DP>1.5*AVG(FORMAT/DP)' | \
+        bcftools filter -e 'F_MISSING > 0.1' | \
+        bcftools view --min-ac 3 -m2 -M2 -v snps | \ 
+        bcftools sort -O z -o $VCF90
+bcftools index $VCF90
+
+### Physical linkage
+plink --vcf $VCF50 --bp-space 1000 --allow-extra-chr --set-missing-var-ids @:# --make-bed --recode vcf --out $OUT_DIR/full_miss50_LD
+
+plink --vcf $VCF90 --bp-space 1000 --allow-extra-chr --set-missing-var-ids @:# --make-bed --recode vcf --out $OUT_DIR/full_miss90_LD
+```
+
+# Visualize filtered dataset sampling
+```{r}
+library(tidyverse)
+library(vcfR)
+library(stringr)
+
+### read in sampling information
+popmap <- read_table("~/Dropbox/Distichus_Project/brevirostris-ms/brevirostris-project-master-popmap-detailed.tsv")
+unique(popmap$taxon)
+
+### 50% missingness VCF from PLINK (14,774 biallelic SNPs)
+vcf50 <- read.vcfR("~/Dropbox/Distichus_Project/brevirostris-ms/data/pop-gen/full_miss50_LD.vcf")
+vcf50
+
+### 90% missingness VCF from PLINK (3,339 biallelic SNPs)
+vcf90 <- read.vcfR("~/Dropbox/Distichus_Project/brevirostris-ms/data/pop-gen/full_miss90_LD.vcf")
+vcf90
+
+### Are specimens the same across VCFs?
+colnames(vcf90@gt)[2:299] == colnames(vcf50@gt)[2:299]
+
+### Stupid PLINK artifact means I have to modify the names to get matches in spreadsheet
+vcf_specimens <- str_split(colnames(vcf90@gt)[2:299], "_", simplify = TRUE)
+vcf_specimens <- apply(vcf_specimens, 1, function(row){
+    if(row[1] == row[2]) {
+        return(row[1])
+    } else {
+        return(paste(row[1], row[2], sep = "_"))
+    }
+})
+
+### Exclude dropped specimens and re-order to match order of VCFs
+popmap <- popmap %>%
+        filter(specimen_path %in% vcf_specimens) %>%
+        arrange(factor(specimen_path, levels = vcf_specimens))
+# write.table(popmap, file = "sampling-master-detailed.tsv")
+### Need to drop duplicate of 8304
+```
+
+## Map samples
+```{r}
+library(rnaturalearth)
+library(sf)
+sf::sf_use_s2(FALSE) 
+
+library(maps)
+library(ggnewscale)
+library(grid)
+library(gridExtra)
+library(ggpubr)
+library(cowplot)
+
+popmap <- read_table("~/Dropbox/Distichus_Project/brevirostris-ms/sampling-master-detailed.tsv")
+### Improved map aesthetics
+world <- rnaturalearth::ne_countries(returnclass = "sf", scale = "large")
+
+bounds <- st_bbox(c(xmin = -82, xmax = -65, 
+                  ymin = 15,   ymax = 30), 
+                crs = st_crs(world))
+
+world_cropped <- st_crop(world, bounds)
+
+
+### Define color scheme for all taxa
+cols <- c(
+  "aurifer"          = "#DB0CC4",
+  "biminiensis"      = "#DBA163",
+  "brevirostris"     = "#202AC2",
+  "caudalis"         = "#93BBBD",
+  "dapsilis"         = "#104728",
+  "distichoides"     = "#662822",
+  "distichus"        = "#7B3F8A",
+  "dom1"             = "#7C15E6",
+  "dom2"             = "#2E4766",
+  "dom3"             = "#CE0452",
+  "dom4"             = "#B83B15",
+  "favillarum"       = "#FFE684",
+  "east_ignigularis" = "#28C3D1",
+  "west_ignigularis" = "#30C7AB",
+  "marron"           = "#756CA3",
+  "ocior"            = "#D1C5AE",
+  "properus"         = "#BDA425",
+  "ravitergum"       = "#BBDB8B",
+  "sejunctus"        = "#87DB41",
+  "suppar"           = "#DB6E1B",
+  "vinosus"          = "#DB8CA3",
+  "websteri"         = "#000000"
+)
+
+# col_labs <- unique(popmap$taxon)
+col_labs <- c(
+  "aurifer"          = "A. d. aurifer",
+  "biminiensis"      = "A. d. biminiensis",
+  "brevirostris"     = "A. brevirostris",
+  "caudalis"         = "A. caudalis",
+  "dapsilis"         = "A. d. dapsilis",
+  "distichoides"     = "A. d. distichoides",
+  "distichus"        = "A. d. distichus",
+  "dom1"             = "A. d. dominicensis (northwest)",
+  "dom2"             = "A. d. dominicensis (east)",
+  "dom3"             = "A. d. dominicensis (southwest)",
+  "dom4"             = "A. d. dominicensis (west)",
+  "favillarum"       = "A. d. favillarum",
+  "east_ignigularis" = "A. d. ignigularis (east)",
+  "west_ignigularis" = "A. d. ignigularis (west)",
+  "marron"           = "A. marron",
+  "ocior"            = "A. d. ocior",
+  "properus"         = "A. d. properus",
+  "ravitergum"       = "A. d. ravitergum",
+  "sejunctus"        = "A. d. sejunctus",
+  "suppar"           = "A. d. suppar",
+  "vinosus"          = "A. d. vinosus",
+  "websteri"         = "A. websteri"
+)
+
+shp_labs = c(
+    "aurifer"          = "Western A. distichus subspecies",
+    "biminiensis"      = "Bahamian A. distichus subspecies",
+    "brevirostris"     = "A. brevirostris species group",
+    "caudalis"         = "A. brevirostris species group",
+    "dapsilis"         = "Bahamian A. distichus subspecies",
+    "distichoides"     = "Bahamian A. distichus subspecies",
+    "distichus"        = "Bahamian A. distichus subspecies",
+    "dom1"             = "Western A. distichus subspecies",
+    "dom2"             = "Eastern A. distichus subspecies",
+    "dom3"             = "Western A. distichus subspecies",
+    "dom4"             = "Western A. distichus subspecies",
+    "favillarum"       = "Western A. distichus subspecies",
+    "east_ignigularis" = "Eastern A. distichus subspecies",
+    "west_ignigularis" = "Eastern A. distichus subspecies",
+    "marron"           = "A. brevirostris species group",
+    "ocior"            = "Bahamian A. distichus subspecies",
+    "properus"         = "Eastern A. distichus subspecies",
+    "ravitergum"       = "Eastern A. distichus subspecies",
+    "sejunctus"        = "Eastern A. distichus subspecies",
+    "suppar"           = "Western A. distichus subspecies",
+    "vinosus"          = "Western A. distichus subspecies",
+    "websteri"         = "A. brevirostris species group" 
+)
+
+popmap$clade <- shp_labs[popmap$population_post]
+shps <- c(
+    "Western A. distichus subspecies"  = 22,
+    "Bahamian A. distichus subspecies" = 23,
+    "Eastern A. distichus subspecies"  = 21,
+    "A. brevirostris species group"    = 24
+)
+
+```
+
+
+## Make figure
+```{r, fig.width = 12, fig.height = 12}
+hi <- ggplot() + geom_sf(data = world_cropped) +
+    coord_sf(ylim = c(17.4, 20.2), xlim = c(-74.55, -68.25)) +
+        geom_point(data = popmap, aes(x = longitude, y = latitude, fill = population_post, shape = clade), size = 4, color = "black", stroke = 0.5, alpha = 0.8, show.legend = TRUE) +
+        scale_fill_manual(values = cols, labels = col_labs, name = "Taxon") +
+        scale_shape_manual(values = shps, labels = shp_labs, name = "Major Clades") +
+        theme_classic() + xlab("Longitude") + ylab("Latitude") +
+        guides(fill = guide_legend(label.theme = element_text(face = "italic"), override.aes = list(shape = 21, color = "black", stroke = 0.5)),
+                shape = guide_legend(label.theme = element_text(face = "italic"), override.aes = list(fill = "gray50", color = "black", stroke = 0.5)))
+
+leg <- get_legend(hi)
+hi <- hi + theme(legend.position = "none")
+
+ba <- ggplot() + geom_sf(data = world_cropped) +
+        coord_sf(xlim = c(-79, -72.6), ylim = c(22, 26.9)) +
+        geom_point(data = popmap, aes(x = longitude, y = latitude, fill = population_post, shape = clade), size = 4, color = "black", alpha = 0.8, show.legend = TRUE) +
+        scale_fill_manual(values = cols, labels = col_labs) +
+        scale_shape_manual(values = shps, labels = shp_labs, name = "Major Clades") +
+        theme_classic() + xlab("Longitude") + ylab("Latitude") +
+        theme(legend.position = "none")
+
+map_fig <- grid.arrange(ba, hi, ncol = 2, widths = c(5, 15))
+plot(map_fig)
+```
+
+```{r}
+### get count of specimens per locality
+samp_df <- popmap %>% group_by(locality, longitude, latitude) %>% summarize(count = n())
+popmap <- left_join(popmap, samp_df)
+```
+
+```{r, fig.width = 12, fig.height = 12}
+### brevirostris complex
+ab_fig <- ggplot() + geom_sf(data = world_cropped) +
+        coord_sf(xlim = c(-74.55, -68.25), ylim = c(17.4, 20.2)) +
+        geom_point(data = popmap[popmap$complex == "brevirostris",], aes(x = longitude, y = latitude, fill = taxon, size = count), 
+                    pch = 21, color = "black", stroke = 0.5, alpha = 0.9, show.legend = TRUE) +
+        scale_fill_manual(values = cols, labels = c("A. brevirostris", "A. caudalis", "A. marron", "A. websteri"), name = "Species") +
+        scale_size_continuous(range = c(2, 5), name = "Specimens per Locality") +
+        theme_classic() + xlab("Longitude") + ylab("Latitude") +
+        guides(fill = guide_legend(override.aes = list(size = 4), order = 1, label.theme = element_text(face = "italic")),
+            size = guide_legend(nrow = 1, order = 2))
+ab_fig
+ggsave(filename = "/Users/tannermyers/Dropbox/Distichus_Project/brevirostris-ms/figures/brevirostris-complex-sampling.png", plot = ab_fig, width = 12, height = 9, dpi = 300)
+```
+
+```{r, fig.width = 16, fig.height = 12}
+### distichus complex
+h <- ggplot() + geom_sf(data = world_cropped) +
+        coord_sf(xlim = c(-74.55, -68.25), ylim = c(17.4, 20.2)) +
+        geom_point(data = popmap[popmap$complex == "distichus",], aes(x = longitude, y = latitude, fill = population_post, size = count), 
+                    pch = 21, color = "black", alpha = 0.9, show.legend = TRUE) +
+        scale_fill_manual(values = cols, labels = col_labs, name = "Subspecies") +
+        scale_size_continuous(range = c(2, 5), name = "Specimens per Locality") +
+        theme_classic() + xlab("Longitude") + ylab("Latitude") +
+        guides(fill = guide_legend(override.aes = list(size = 4), order = 1, label.theme = element_text(face = "italic")),
+            size = guide_legend(nrow = 1, order = 2))
+l <- get_legend(h)
+h <- h + theme(legend.position = "none")
+            
+b <- ggplot() + geom_sf(data = world_cropped) +
+        coord_sf(xlim = c(-79, -72.6), ylim = c(22, 26.9)) +
+        geom_point(data = popmap[popmap$complex == "distichus",], aes(x = longitude, y = latitude, fill = taxon, size = count), 
+                    pch = 21, color = "black", alpha = 0.9, show.legend = TRUE) +
+        scale_fill_manual(values = cols) +
+        scale_size_continuous(range = c(2, 5)) +
+        theme_classic() + xlab("Longitude") + ylab("Latitude") +
+        guides(colour = guide_legend(override.aes = list(size = 4), order = 1),
+            size = guide_legend(nrow = 1, order = 2)) +
+        theme(legend.position = "none")
+
+### plot Bahamas and Hispaniola together
+ad_fig <- grid.arrange(b, h, l, ncol = 3, widths = c(3, 10, 3))
+plot(ad_fig)
+ggsave(filename = "/Users/tannermyers/Dropbox/Distichus_Project/brevirostris-ms/figures/distichus-complex-sampling.png", plot = ad_fig, width = 16, height = 12, dpi = 300)
+```
+
+# Principal components analysis
+
+These PCAs are largely to identify mis-identified samples and to divide samples into species complex-specific analyses. I will redo them after dropping problematic samples.
+
+```{r}
+library(adegenet)
+
+### convert VCF to adegenet format
+gen50 <- vcfR2genlight(vcf50)
+gen90 <- vcfR2genlight(vcf90)
+
+### drop duplicate sample
+gen50 <- gen50[!gen50@ind.names %in% "8304.pietro.aligned.sorted_8304.pietro.aligned.sorted", ]
+gen90 <- gen90[!gen90@ind.names %in% "8304.pietro.aligned.sorted_8304.pietro.aligned.sorted", ]
+```
+
+## 50% complete dataset
+```{r}
+# pca50 <- glPca(gen50, center = TRUE, scale = FALSE, nf = 4)
+# save(pca50, file = "~/Dropbox/Distichus_Project/brevirostris-ms/data/pop-gen/glPca_vcf50.RData")
+load("~/Dropbox/Distichus_Project/brevirostris-ms/data/pop-gen/glPca_vcf50.RData")
+
+pve50 <- 100*pca50$eig/sum(pca50$eig)
+pve50
+```
+
+```{r}
+df <- as_tibble(cbind(popmap, as.data.frame(pca50$scores)), col_names = c(colnames(popmap), paste0("PC", 1:(ncol(pca50$scores)-1))))
+# col_labs <- names(cols)
+
+ggplot(data = df, aes(x = PC1, y = PC2, color = population_post, label = specimen, alpha = 0.85)) +
+    geom_text() +
+    geom_point(cex = 3) + scale_color_manual(values = cols, labels = col_labs,
+        guide = guide_legend(label.theme = element_text(angle = 0, face = "italic"))) +
+    guides(alpha = "none") +
+    labs(color = "Taxon", x = paste0("Axis 1 (", round(pve50[1], digits = 1), "% of variation)"), y = paste0("Axis 2 (", round(pve50[2], digits = 1), "% of variation)")) +
+    theme(panel.border = element_rect(colour = "black", fill = NA, size = 3),
+    axis.title = element_text(size = 24, colour = "black", family = "Helvetica", face = "bold"))
+```
+
+PCA on 50% complete dataset without overlaid text
+```{r, fig.width = 12, fig.height = 12}
+ggplot(data = df, aes(x = PC1, y = PC2, color = population_post, label = specimen, alpha = 0.85)) +
+    geom_point(cex = 3) + scale_color_manual(values = cols, labels = col_labs,
+        guide = guide_legend(label.theme = element_text(angle = 0, face = "italic"))) +
+    guides(alpha = "none") +
+    labs(color = "Taxon", x = paste0("Axis 1 (", round(pve50[1], digits = 1), "% of variation)"),
+        y = paste0("Axis 2 (", round(pve50[2], digits = 1), "% of variation)")) +
+    theme(panel.border = element_rect(colour = "black", fill = NA, size = 3),
+    axis.title = element_text(size = 24, colour = "black", family = "Helvetica", face = "bold"))
+```
+
+## 90% complete dataset
+```{r}
+pca90 <- glPca(gen90, center = TRUE, scale = FALSE, nf = 3)
+
+pve90 <- 100*pca90$eig/sum(pca90$eig)
+pve90
+```
+
+## Plot PC1 and PC2 with names
+```{r}
+df <- as_tibble(cbind(popmap, as.data.frame(pca90$scores)), col_names = c(colnames(popmap), paste0("PC", 1:(ncol(pca90$scores)-1))))
+
+ggplot(data = df, aes(x = PC1, y = PC2, color = taxon, label = specimen, alpha = 0.85)) +
+    geom_text() +
+    geom_point(cex = 3) + scale_color_manual(values = cols, labels = col_labs,
+        guide = guide_legend(label.theme = element_text(angle = 0, face = "italic"))) +
+    guides(alpha = "none") +
+    labs(color = "Taxon", x = paste0("Axis 1 (", round(pve90[1], digits = 1), "% of variation)"), y = paste0("Axis 2 (", round(pve90[2], digits = 1), "% of variation)")) +
+    theme(panel.border = element_rect(colour = "black", fill = NA, size = 3),
+    axis.title = element_text(size = 24, colour = "black", family = "Helvetica", face = "bold"))
+```
+
+```{r}
+### Cleaner with just points
+ggplot(data = df, aes(x = PC1, y = PC2, color = taxon, label = specimen, alpha = 0.85)) +
+    # geom_text() +
+    geom_point(cex = 5) + scale_color_manual(values = cols, labels = col_labs,
+        guide = guide_legend(label.theme = element_text(angle = 0, face = "italic"))) +
+    guides(alpha = "none") +
+    labs(color = "Taxon", x = paste0("PC1 (", round(pve90[1], digits = 1), "% of variation)"), y = paste0("PC2 (", round(pve90[2], digits = 1), "% of variation)")) +
+    theme_bw() +
+    theme(panel.border = element_rect(colour = "black", fill = NA, size = 3),
+    axis.title = element_text(size = 24, colour = "black", family = "Helvetica", face = "bold"))
+### there's a brevirostris cluster, a ravitergum cluster, and a cluster with the rest of distichus
+
+### What are the non-ravitergum in that cluster?
+df %>% filter(PC2 > 3.75) %>% filter(taxon != "ravitergum")
+```
+
+There's one dom4, a few mis-ID'd as favillarum, and some brevirostris. I'll re-assign the brevirostris samples to the distichus subset for hierarchical analyses.
+
+## Figures
+```{r}
+pc1_2 <- ggplot(data = df, aes(x = PC1, y = PC2, fill = population_post, label = specimen, shape = clade, alpha = 0.95, size = 4)) +
+    geom_point() +
+    scale_fill_manual(values = cols, labels = col_labs,
+        guide = guide_legend(label.theme = element_text(angle = 0, face = "italic"))) +
+    scale_shape_manual(values = shps, labels = shp_labs, name = "Major Clades") +
+    guides(alpha = "none") +
+    labs(fill = "Taxon", x = paste0("PC1 (", round(pve90[1], digits = 1), "% of variation)"), y = paste0("PC2 (", round(pve90[2], digits = 1), "% of variation)")) +
+    theme_bw() +
+    theme(legend.position = "none",
+        panel.border = element_rect(colour = "black", fill = NA, size = 3),
+        axis.title = element_text(colour = "black", family = "Helvetica", size = 16)
+        )
+pc1_2
+
+pc2_3 <- ggplot(data = df, aes(x = PC2, y = PC3, fill = population_post, shape = clade, label = specimen, alpha = 0.95, size = 4)) +
+    geom_point() +
+    scale_fill_manual(values = cols, labels = col_labs,
+        guide = guide_legend(label.theme = element_text(angle = 0, face = "italic"))) +
+    scale_shape_manual(values = shps, labels = shp_labs, name = "Major Clades") +
+    guides(alpha = "none") +
+    labs(fill = "Taxon", x = paste0("PC2 (", round(pve90[2], digits = 1), "% of variation)"), y = paste0("PC3 (", round(pve90[3], digits = 1), "% of variation)")) +
+    theme_bw() +
+    theme(legend.position = "none",
+        panel.border = element_rect(colour = "black", fill = NA, size = 3),
+        axis.title = element_text(colour = "black", family = "Helvetica", size = 16)
+        )
+pc2_3
+```
+
+```{r, fig.width = 16, fig.height = 12}
+pc_fig <- grid.arrange(leg, pc1_2, pc2_3, ncol = 3, widths = c(3, 5, 5))
+fig1 <- grid.arrange(map_fig, pc_fig, ncol = 1, nrow = 2, heights = c(6,4))
+plot(fig1)
+ggsave(filename = "/Users/tannermyers/Dropbox/Apps/Overleaf/distichus_tree/figures/fig-components/fig1-sampling-pca.pdf", plot = fig1, width = 16, height = 12, dpi = 400)
+```
+
+# Re-assign samples based on clustering
+```{r, eval=F}
+brevs <- popmap[popmap$complex == "brevirostris",]
+distichus <- popmap[popmap$complex == "distichus",]
+
+misIDs <- c(590, 1198, 5683, 7368)
+
+distichus <- popmap %>% filter(specimen %in% misIDs) %>% rbind(distichus) %>% filter(specimen_path != "8304.pietro.aligned.sorted")
+brevs <- brevs %>% filter(!(specimen %in% misIDs ))
+# write.table(brevs, "brevirostris-popmap.tsv", row.names = F, quote = F, sep = "\t")
+# write.table(distichus, "distichus-popmap.tsv", row.names = F, quote = F, sep = "\t")
+```
+
+```{bash, eval=FALSE}
+awk -F"\t" '$4 == "brevirostris" {print}' brevirostris-project-master-popmap-detailed.tsv > brevirostris-popmap.tsv
+
+awk -F"\t" '$4 == "distichus" {print}' brevirostris-project-master-popmap-detailed.tsv > distichus-popmap.tsv      
+
+### Add "brevirostris" that cluster with distichus to distichus file
+grep -w "590" brevirostris-popmap.tsv | tee -a distichus-popmap.tsv
+grep -w "1198" brevirostris-popmap.tsv | tee -a distichus-popmap.tsv
+grep -w "5683" brevirostris-popmap.tsv | tee -a distichus-popmap.tsv
+grep -w "7368" brevirostris-popmap.tsv | tee -a distichus-popmap.tsv 
+
+### drop those same samples
+grep -w -v "590" brevirostris-popmap.tsv > tmp && mv tmp brevirostris-popmap.tsv
+grep -w -v "1198" brevirostris-popmap.tsv > tmp && mv tmp brevirostris-popmap.tsv 
+grep -w -v "5683" brevirostris-popmap.tsv > tmp && mv tmp brevirostris-popmap.tsv 
+grep -w -v "7368" brevirostris-popmap.tsv > tmp && mv tmp brevirostris-popmap.tsv  
+
+### Drop replicate of sample with less data
+grep -v "8304.pietro" distichus-popmap.tsv > tmp && mv tmp distichus-popmap.tsv
+```
+
+That leaves us with a total of 50 members of the *brevirostris* species complex and a total of 257 *distichus*.
+
+# *Anolis brevirostris* complex only
+
+## 90 % complete dataset -- PCA
+```{r}
+popmap <- read_table("~/Dropbox/Distichus_Project/brevirostris-ms/brevirostris-popmap.tsv")
+
+br90 <- read.vcfR("~/Dropbox/Distichus_Project/brevirostris-ms/data/pop-gen/brevirostris/brevirostris_miss90_LD.vcf")
+colnames(br90@gt)[2:46] <- popmap$specimen
+br90_gen <- vcfR2genlight(br90)
+
+br90_pca <- glPca(br90_gen, center = TRUE, scale = FALSE, nf = 3)
+```
+
+```{r}
+pve90 <- 100*br90_pca$eig/sum(br90_pca$eig)
+pve90
+```
+
+```{r}
+df <- as_tibble(cbind(popmap, as.data.frame(br90_pca$scores)), col_names = c(colnames(popmap), paste0("PC", 1:(ncol(pca50$scores)-1))))
+br_labs <- col_labs[names(col_labs) %in% popmap$taxon]
+br_cols <- cols[names(cols) %in% names(br_labs)]
+
+ggplot(data = df, aes(x = PC1, y = PC2, color = taxon, label = specimen, alpha = 0.85)) +
+    geom_text() +
+    geom_point(cex = 3) + scale_color_manual(values = br_cols, labels = br_labs,
+        guide = guide_legend(label.theme = element_text(angle = 0, face = "italic"))) +
+    guides(alpha = "none") +
+    labs(color = "Taxon", x = paste0("Axis 1 (", round(pve90[1], digits = 1), "% of variation)"),
+        y = paste0("Axis 2 (", round(pve90[2], digits = 1), "% of variation)")) +
+    theme(panel.border = element_rect(colour = "black", fill = NA, size = 3),
+    axis.title = element_text(size = 24, colour = "black", family = "Helvetica", face = "bold"))
+```
+
+```{r}
+ggplot(data = df, aes(x = PC2, y = PC3, color = taxon, label = specimen, alpha = 0.85)) +
+    geom_text() +
+    geom_point(cex = 3) + scale_color_manual(values = br_cols, labels = br_labs,
+        guide = guide_legend(label.theme = element_text(angle = 0, face = "italic"))) +
+    guides(alpha = "none") +
+    labs(color = "Taxon", x = paste0("Axis 2 (", round(pve90[2], digits = 1), "% of variation)"),
+        y = paste0("Axis 3 (", round(pve90[3], digits = 1), "% of variation)")) +
+    theme(panel.border = element_rect(colour = "black", fill = NA, size = 3),
+    axis.title = element_text(size = 24, colour = "black", family = "Helvetica", face = "bold"))
+```
+
+```{r}
+pc1_2 <- ggplot(data = df, aes(x = PC1, y = PC2, fill = taxon, label = specimen, shape = complex, alpha = 0.95, size = 4)) +
+    geom_point() +
+    scale_fill_manual(values = br_cols, labels = br_labs,
+        guide = guide_legend(label.theme = element_text(angle = 0, face = "italic"))) +
+    scale_shape_manual(values = c(21), labels = c("A. brevirostris", "A. distichus"), name = "Species Complex") +
+    guides(alpha = "none") +
+    labs(color = "Taxon", x = paste0("PC1 (", round(pve90[1], digits = 1), "% of variation)"), y = paste0("PC2 (", round(pve90[2], digits = 1), "% of variation)")) +
+    theme_bw() +
+    theme(legend.position = "none",
+        panel.border = element_rect(colour = "black", fill = NA, size = 3)
+    )
+pc2_3 <- ggplot(data = df, aes(x = PC2, y = PC3, fill = taxon, shape = complex, label = specimen, alpha = 0.95, size = 4)) +
+    geom_point() +
+    scale_fill_manual(values = br_cols, labels = br_labs,
+        guide = guide_legend(label.theme = element_text(angle = 0, face = "italic"))) +
+    scale_shape_manual(values = c(21), labels = c("A. brevirostris", "A. distichus"), name = "Species Complex") +
+    guides(alpha = "none") +
+    labs(color = "Taxon", x = paste0("PC2 (", round(pve90[2], digits = 1), "% of variation)"), y = paste0("PC3 (", round(pve90[3], digits = 1), "% of variation)")) +
+    theme_bw() +
+    theme(legend.position = "none",
+        panel.border = element_rect(colour = "black", fill = NA, size = 3)
+    )
+
+ab_pc <- grid.arrange(pc1_2, pc2_3, nrow = 1, ncol = 2)
+```
+
+```{r}
+br_fig <- grid.arrange(ab_fig, ab_pc, nrow = 2, ncol = 1, heights = c(8,6))
+ggsave(filename = "/Users/tannermyers/Dropbox/Apps/Overleaf/distichus_tree/figures/brev-complex-sampling-pca.png", plot = br_fig, width = 16, height = 12, dpi = 300)
+```
+
+# *Anolis distichus* complex only
+
+## 90% complete dataset -- PCA
+```{r}
+popmap <- read_table("~/Dropbox/Distichus_Project/brevirostris-ms/distichus-popmap.tsv")
+
+ad90 <- read.vcfR("~/Dropbox/Distichus_Project/brevirostris-ms/data/pop-gen/distichus/distichus_miss90_LD.vcf")
+colnames(ad90@gt)[2:253] <- popmap$specimen
+ad90_gen <- vcfR2genlight(ad90)
+
+ad90_pca <- glPca(ad90_gen, center = TRUE, scale = FALSE, nf = 3)
+```
+
+```{r}
+pve90 <- 100*ad90_pca$eig/sum(ad90_pca$eig)
+pve90
+```
+
+```{r}
+df <- as_tibble(cbind(popmap, as.data.frame(ad90_pca$scores)), col_names = c(colnames(popmap), paste0("PC", 1:(ncol(pca50$scores)-1))))
+ad_labs <- col_labs[names(col_labs) %in% popmap$taxon]
+ad_cols <- cols[names(cols) %in% names(ad_labs)]
+
+ggplot(data = df, aes(x = PC1, y = PC2, color = taxon, label = specimen, alpha = 0.85)) +
+    geom_text() +
+    geom_point(cex = 3) + scale_color_manual(values = ad_cols, labels = ad_labs,
+        guide = guide_legend(label.theme = element_text(angle = 0, face = "italic"))) +
+    guides(alpha = "none") +
+    labs(color = "Taxon", x = paste0("Axis 1 (", round(pve90[1], digits = 1), "% of variation)"),
+        y = paste0("Axis 2 (", round(pve90[2], digits = 1), "% of variation)")) +
+    theme(panel.border = element_rect(colour = "black", fill = NA, size = 3),
+    axis.title = element_text(size = 24, colour = "black", family = "Helvetica", face = "bold"))
+```
+
+```{r}
+pc1_2 <- ggplot(data = df, aes(x = PC1, y = PC2, fill = taxon, label = specimen, alpha = 0.95, size = 4)) +
+    geom_point(pch = 21) +
+    scale_fill_manual(values = ad_cols, labels = ad_labs,
+        guide = guide_legend(label.theme = element_text(angle = 0, face = "italic"))) +
+    guides(alpha = "none") +
+    labs(color = "Taxon", x = paste0("PC1 (", round(pve90[1], digits = 1), "% of variation)"), y = paste0("PC2 (", round(pve90[2], digits = 1), "% of variation)")) +
+    theme_bw() +
+    theme(legend.position = "none",
+        panel.border = element_rect(colour = "black", fill = NA, size = 3)
+    )
+pc2_3 <- ggplot(data = df, aes(x = PC2, y = PC3, fill = taxon, label = specimen, alpha = 0.95, size = 4)) +
+    geom_point(pch = 21) +
+    scale_fill_manual(values = ad_cols, labels = ad_labs,
+        guide = guide_legend(label.theme = element_text(angle = 0, face = "italic"))) +
+    guides(alpha = "none") +
+    labs(color = "Taxon", x = paste0("PC2 (", round(pve90[2], digits = 1), "% of variation)"), y = paste0("PC3 (", round(pve90[3], digits = 1), "% of variation)")) +
+    theme_bw() +
+    theme(legend.position = "none",
+        panel.border = element_rect(colour = "black", fill = NA, size = 3)
+    )
+
+ad_pc <- grid.arrange(pc1_2, pc2_3, nrow = 1, ncol = 2)
+```
+
+```{r}
+distichus_fig <- grid.arrange(ad_fig, ad_pc, nrow = 2, ncol = 1, heights = c(9,6))
+ggsave(filename = "/Users/tannermyers/Dropbox/Apps/Overleaf/distichus_tree/figures/distichus-complex-sampling-pca.png", plot = distichus_fig, width = 16, height = 12, dpi = 300)
+```

@@ -1,0 +1,1497 @@
+---
+title: "Evolutionary history of the Y chromosome in the *Anolis distichus* species group"
+author: "Tanner Myers"
+date: "`r Sys.Date()`"
+output:
+  rmdformats::html_clean:
+    highlight: kate
+---
+
+
+# How many SNPs are on the Y chromosome?
+
+This BED file contains coordinates for the scaffolds containing the Y chromosome.
+```
+scaffold_12    0        8700000
+scaffold_13    0        26556177
+scaffold_16    0        15407528
+```
+
+Let's check out the number of SNPs on my existing datasets.
+```{bash, eval=FALSE} 
+### how many SNPs are on the two pure Y scaffolds in the unfiltered SNP dataset?
+grep -v "^#" /Users/tannermyers/Dropbox/Distichus_Project/brevirostris-ms/data-archive/unfiltered/populations.snps.vcf | \
+    grep -E 'scaffold_13|scaffold_16' | \
+    wc -l
+#   32629
+
+### how many total markers in 50% complete VCF?
+gzcat /Users/tannermyers/Dropbox/Distichus_Project/brevirostris-ms/data/pop-gen/full_miss50_snps.vcf.gz | \
+    grep -v '^#' | wc -l
+#   580058
+
+gzcat /Users/tannermyers/Dropbox/Distichus_Project/brevirostris-ms/data/pop-gen/full_miss50_snps.vcf.gz | grep -v '^#' | grep "scaffold_12" | wc -l
+#   10428
+
+gzcat /Users/tannermyers/Dropbox/Distichus_Project/brevirostris-ms/data/pop-gen/full_miss50_snps.vcf.gz | grep -v '^#' | grep "scaffold_13" | wc -l
+#   3647
+
+gzcat /Users/tannermyers/Dropbox/Distichus_Project/brevirostris-ms/data/pop-gen/full_miss50_snps.vcf.gz | grep -v '^#' | grep "scaffold_16" | wc -l
+#   1333
+```
+
+So, even with a less than ideal filtering scheme, we retain a substantial amount of data coming from the Y to infer evolutionary history. 
+
+# Confirm males have Y chromosome data
+I used samtools to quantify the number of reads and estimate the depth of coverage on the sex chromosome scaffolds to confirm morphological males as males/exclude females.
+```{bash, eval=FALSE}
+#!/bin/bash
+#SBATCH --job-name=map-stats
+#SBATCH --mem=96G
+#SBATCH --time=60:00:00
+#SBATCH --partition=nova_20
+#SBATCH --output=out.stats_%j
+#SBATCH --error=err.stats_%j
+
+source ~/mambaforge/etc/profile.d/conda.sh
+conda activate genomics_env
+
+BAM_DIR=/scratch/tcm0036/distichus-ddRAD/alignments/AnoDist/bam/
+
+STAT_FILE=mapping-stats.csv
+
+echo -e "Specimen,Mapped Reads,Y-mapped reads,Avg. Depth,X1 Depth,X2 Depth,Y Depth" > $STAT_FILE
+
+for BAM in "${BAM_DIR}"/*aligned.sorted.bam; do
+
+        SAMPLE=$(basename "$BAM" .aligned.sorted.bam)
+        echo "Processing $SAMPLE..."
+
+        ### get mapped reads
+        MAPPED_READS=$(samtools view -c -F 4 "$BAM")
+
+        ## get Y mapped reads
+        Y_READS=$(samtools view -c -F 4 -L y-chrom-scaffolds.txt "$BAM")
+
+        ### estimate average depth of coverage
+        AVG_DEPTH=$(samtools depth "$BAM" | awk '{sum+=$3} END {if (NR>0) print sum/NR; else print 0}')
+        AVG_DEPTH=$(printf "%.2f" "$AVG_DEPTH")
+
+        ### estimate average depth of coverage for X1 scaffold
+        X1_DEPTH=$(samtools depth -r scaffold_8 "$BAM" | awk '{sum+=$3} END {if (NR>0) print sum/NR; else print 0}')
+        X1_DEPTH=$(printf "%.2f" "$X1_DEPTH")
+
+        ### estimate average depth of coverage for X2 scaffold
+        X2_DEPTH=$(samtools depth -r scaffold_12:8700001-33619221 "$BAM" | awk '{sum+=$3} END {if (NR>0) print sum/NR; else print 0}')
+        X2_DEPTH=$(printf "%.2f" "$X2_DEPTH")
+
+        ### estimate average depth of coverage for Y scaffold
+        Y_DEPTH=$(samtools depth -b y-chrom-scaffolds.txt "$BAM" | awk '{sum+=$3} END {if (NR>0) print sum/NR; else print 0}')
+        Y_DEPTH=$(printf "%.2f" "$Y_DEPTH")
+
+        ### append stats to file
+        echo -e "${SAMPLE},${MAPPED_READS},${Y_READS},${AVG_DEPTH},${X1_DEPTH},${X2_DEPTH},${Y_DEPTH}" >> $STAT_FILE
+        echo "Done with $SAMPLE"
+
+done
+```
+
+```{r, fig.width = 24, fig.height = 8}
+library(tidyverse)
+
+y_data <- read_csv("/Users/tannermyers/Dropbox/Distichus_Project/brevirostris-ms/y-chromosome-analysis/mapping-stats.csv")
+y_data
+
+popmap <- read_table("/Users/tannermyers/Dropbox/Distichus_Project/brevirostris-ms/sampling-master-detailed.tsv")
+### Subset to samples in final phylo./pop gen sampling
+y_data <- y_data %>% filter(Specimen %in% popmap$specimen)
+
+y_data %>% filter(Specimen %in% popmap$specimen[popmap$sex == "m"]) %>% summary()
+y_data %>%
+      filter(Specimen %in% popmap$specimen[popmap$sex == "m"]) %>%
+      pivot_longer(cols = c(`X1 Depth`, `X2 Depth`, `Y Depth`),
+            names_to = "Chromosome",
+            values_to = "Depth") %>%
+      ggplot(aes(x = Specimen, y = Depth, fill = Chromosome)) +
+      geom_col(position = "dodge") +
+      theme_bw() +
+      theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+      labs(x = "Specimen", y = "Mean depth")
+m_y <- y_data %>% filter(Specimen %in% popmap$specimen[popmap$sex == "m"])
+m_ratio <- m_y$`Y-mapped reads`/m_y$`Mapped Reads`
+
+y_data %>% filter(Specimen %in% popmap$specimen[popmap$sex == "f"]) %>% summary()
+y_data %>%
+      filter(Specimen %in% popmap$specimen[popmap$sex == "f"]) %>%
+      pivot_longer(cols = c(`X1 Depth`, `X2 Depth`, `Y Depth`),
+            names_to = "Chromosome",
+            values_to = "Depth") %>%
+      ggplot(aes(x = Specimen, y = Depth, fill = Chromosome)) +
+      geom_col(position = "dodge") +
+      theme_bw() +
+      theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+      labs(x = "Specimen", y = "Mean depth")
+
+f_y <- y_data %>% filter(Specimen %in% popmap$specimen[popmap$sex == "f"])
+f_ratio <- f_y$`Y-mapped reads`/f_y$`Mapped Reads`
+
+### compare ratio of Y-mapped reads for a priori ID'd males vs females
+t.test(m_ratio, f_ratio)
+
+hist(m_ratio, col="red", breaks=30, xlim=c(0,0.04),
+    main = "Ratio of Y chromome reads/Total Mapped Reads")
+hist(f_ratio, col=rgb(0,0,1,0.5), add=TRUE)
+
+boxplot(m_ratio, f_ratio, names=c("M","F"))
+```
+
+The males have a greater proportion of Y-mapped reads than the females do so I will proceed with our sampling's sex identifications as is.
+
+```{bash, eval = FALSE}
+awk '$14 == "m" {print $2}' sampling-master-detailed.tsv > males.txt
+
+awk -F'\t' '$14=="m" && $7 !~ /^(caudalis|brevirostris|marron|websteri)$/ {print $2}' sampling-master-detailed.tsv > distichus_only_males.txt
+```
+
+
+```{bash,eval=FALSE}
+Y_BED=/home/tcm0036/distichus-ddRAD/brevirostris-ms/scripts/bioinformatics/y-chrom-scaffolds.txt
+VCF=/scratch/tcm0036/distichus-ddRAD/brevirostris-project/stacks/populations/populations.snps.sorted.vcf.gz
+
+bcftools view -S $MALES --regions-file $Y_BED $VCF | \
+    bcftools query -f '%CHROM\t%POS\t[%DP\t]\n' | \
+    awk '{sum=0; n=0; for(i=3;i<=NF;i++) if($i!=".") {sum+=$i; n++} if(n>0) print $1"\t"$2"\t"sum/n"\t"n}' \
+    > per-site-mean-depth.txt
+```
+
+```{r}
+dp <- read_table("/Users/tannermyers/Dropbox/Distichus_Project/brevirostris-ms/y-chromosome-analysis/per-site-mean-depth.txt",
+            col_names = c("scaffold", "position", "mean_depth", "sample_size"))
+
+quantile(dp$mean_depth)
+
+q3 <- quantile(dp$mean_depth, 0.75)
+
+dp[dp$mean_depth <= q3*3,]
+```
+
+## To maximize loci retention, filter specimens by missingness
+
+```{bash,eval=FALSE}
+VCF=/scratch/tcm0036/distichus-ddRAD/brevirostris-project/stacks/populations/populations.snps.sorted.vcf.gz
+MALES=/home/tcm0036/distichus-ddRAD/brevirostris-ms/males.txt
+Y_BED=/home/tcm0036/distichus-ddRAD/brevirostris-ms/scripts/bioinformatics/y-chrom-scaffolds.txt
+INDMISS=/home/tcm0036/distichus-ddRAD/brevirostris-ms/scripts/bioinformatics/y_missingness_per_ind.txt
+
+paste <(bcftools view -S $MALES --regions-file $Y_BED $VCF | \
+bcftools query -f '[%SAMPLE\t]\n' | head -1 | tr '\t' '\n') <(bcftools view -S $MALES --regions-file $Y_BED $VCF | \
+bcftools query -f '[%GT\t]\n' | awk -v OFS="\t" '{for (i=1;i<=NF;i++) if ($i == "./.") sum[i]+=1 } END {for (i in sum) print i, sum[i] / NR }' | sort -k1,1n | cut -f 2) > $INDMISS
+```
+
+```{r, fig.width = 20, fig.height = 8}
+y_miss <- read_table("/Users/tannermyers/Dropbox/Distichus_Project/brevirostris-ms/y-chromosome-analysis/y_missingness_per_ind.txt",
+    col_names = c("Specimen", "MISS"))
+
+quantile(y_miss$MISS)
+y_miss %>%
+    ggplot(aes(x = reorder(Specimen, MISS), y = MISS)) +
+    geom_col(position = "dodge") +
+    coord_cartesian(ylim = c(0.5, 1.0)) +
+    theme_bw() +
+    theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+    labs(x = "Specimen", y = "Y chromosome missingness")
+    
+### What taxa would I be losing if I dropped all samples over 80% missing?
+cbind(y_miss[y_miss$MISS > 0.8, ], popmap$population_post[match(y_miss$Specimen[y_miss$MISS > 0.8], popmap$specimen_path)])
+
+unique(popmap$population_post[popmap$specimen_path %in% y_miss$Specimen[y_miss$MISS > 0.8]])
+unique(popmap$population_post[popmap$specimen_path %in% y_miss$Specimen[y_miss$MISS <= 0.8]])
+
+popmap %>% filter(specimen_path %in% y_miss$Specimen[y_miss$MISS <= 0.8]) %>% group_by(population_post) %>% summarise(n = n())
+
+### Same question, but 85% missingness
+cbind(y_miss[y_miss$MISS > 0.85, ], popmap$population_post[match(y_miss$Specimen[y_miss$MISS > 0.85], popmap$specimen_path)])
+
+unique(popmap$population_post[popmap$specimen_path %in% y_miss$Specimen[y_miss$MISS > 0.85]])
+unique(popmap$population_post[popmap$specimen_path %in% y_miss$Specimen[y_miss$MISS <= 0.85 ]])
+```
+
+# Redo data filtering for the Y chromosome with only males
+```{bash, eval=FALSE}
+#! /usr/bin/env bash
+#SBATCH --mail-type=FAIL,END
+#SBATCH --mail-user=tcm0036@auburn.edu
+#SBATCH --partition=jro0014_amd
+#SBATCH --mem=32G
+#SBATCH --error=snpfilt_%j.err
+#SBATCH --output=snpfilt_%j.out
+#SBATCH --time=24:00:00
+#SBATCH --job-name=YFilter
+
+## Load conda env with bcftools
+source ~/mambaforge/etc/profile.d/conda.sh
+conda activate genomics_env
+
+VCF=/scratch/tcm0036/distichus-ddRAD/brevirostris-project/stacks/populations/populations.snps.sorted.vcf.gz
+CLEAN=/scratch/tcm0036/distichus-ddRAD/brevirostris-project/bcftools/ychromosome_cleaned.vcf.gz
+AD_CLEAN=/scratch/tcm0036/distichus-ddRAD/brevirostris-project/bcftools/ychromosome_cleaned_distichus_only.vcf.gz
+OUT_DIR=/scratch/tcm0036/distichus-ddRAD/brevirostris-project/bcftools
+Y_BED=/home/tcm0036/distichus-ddRAD/brevirostris-ms/scripts/bioinformatics/y-chrom-scaffolds.txt
+INDMISS=/home/tcm0036/distichus-ddRAD/brevirostris-ms/scripts/bioinformatics/y_missingness_per_ind.txt
+MALES=/home/tcm0036/distichus-ddRAD/brevirostris-ms/males.txt
+AD_MALES=/home/tcm0036/distichus-ddRAD/brevirostris-ms/distichus_only_males.txt
+VCF50=${OUT_DIR}/all_males_y_scaffolds_50miss.vcf.gz
+VCF90=${OUT_DIR}/all_males_y_scaffolds_10miss.vcf.gz
+AD50=${OUT_DIR}/distichus_males_y_scaffolds_50miss.vcf.gz
+AD90=${OUT_DIR}/distichus_males_y_scaffolds_10miss.vcf.gz
+
+paste \
+<(bcftools view -S $MALES --regions-file $Y_BED $VCF | \
+bcftools query -f '[%SAMPLE\t]\n' | head -1 | tr '\t' '\n') \
+<(bcftools view -S $MALES --regions-file $Y_BED $VCF | \
+bcftools query -f '[%GT\t]\n' | awk -v OFS="\t" '{for (i=1;i<=NF;i++) if ($i ~ /\./) sum[i]+=1 } END {for (i in sum) print i, sum[i] / NR }' | sort -k1,1n | cut -f 2) > $INDMISS
+
+paste <(bcftools view -S $MALES --regions-file $Y_BED $VCF | \
+    bcftools query -f '[%SAMPLE\t]\n' | \
+    head -1 | \
+    tr '\t' '\n') <(bcftools view -S $MALES --regions-file $Y_BED $VCF | \
+    bcftools query -f '[%GT\t]\n' | \
+    awk -v OFS="\t" '{for (i=1;i<=NF;i++) if ($i ~ /\./) sum[i]+=1 } END {for (i in sum) print i, sum[i] / NR }' | \
+    sort -k1,1n | cut -f 2) | awk '{ if ($2 > 0.8) print $1 }' > specimens-to-exclude.txt
+grep -Fvx -f specimens-to-exclude.txt $MALES > filtered-males.txt
+grep -Fvx -f specimens-to-exclude.txt $AD_MALES > filtered-distichus-males.txt
+
+### Drop specimens with >85% missing data
+bcftools view -S filtered-males.txt --regions-file $Y_BED $VCF | bgzip > $CLEAN
+bcftools index $CLEAN
+
+bcftools view -S filtered-distichus-males.txt --regions-file $Y_BED $VCF | bgzip > $AD_CLEAN
+bcftools index $AD_CLEAN
+
+### Filter SNPs for depth, completeness (50%), quality, and minor alleles
+bcftools view -e 'FORMAT/DP > 72' $CLEAN | \
+        bcftools view -i 'FORMAT/DP > 5' | \
+        bcftools view -e 'F_MISSING > 0.5' | \
+        bcftools view -m2 -M2 -v snps | \
+        bcftools sort -O z -o $VCF50
+bcftools index $VCF50
+
+### Filter SNPs for depth, completeness (90%), quality, and minor alleles
+bcftools view -e 'FORMAT/DP > 72' $CLEAN | \
+        bcftools view -i 'FORMAT/DP > 5' | \
+        bcftools view -e 'F_MISSING > 0.1' | \
+        bcftools view -m2 -M2 -v snps | \
+        bcftools sort -O z -o $VCF90
+bcftools index $VCF90
+
+### Filter SNPs for depth, completeness (50%), quality, and minor alleles
+bcftools view -e 'FORMAT/DP > 72' $AD_CLEAN | \
+        bcftools view -i 'FORMAT/DP > 5' | \
+        bcftools view -e 'F_MISSING > 0.5' | \
+        bcftools view -m2 -M2 -v snps | \
+        bcftools sort -O z -o $AD50
+bcftools index $AD50
+
+### Filter SNPs for depth, completeness (90%), quality, and minor alleles
+bcftools view -e 'FORMAT/DP > 72' $AD_CLEAN | \
+        bcftools view -i 'FORMAT/DP > 5' | \
+        bcftools view -e 'F_MISSING > 0.1' | \
+        bcftools view -m2 -M2 -v snps | \
+        bcftools sort -O z -o $AD90
+bcftools index $AD90
+```
+
+# Y chromosome population genomics
+
+```{r, echo = FALSE}
+popmap <- read_table("/Users/tannermyers/Dropbox/Distichus_Project/brevirostris-ms/sampling-master-detailed.tsv")
+
+### Define color scheme for all taxa
+cols <- c(
+  "aurifer"          = "#DB0CC4",
+  "biminiensis"      = "#DBA163",
+  "brevirostris"     = "#202AC2",
+  "caudalis"         = "#93BBBD",
+  "dapsilis"         = "#104728",
+  "distichoides"     = "#662822",
+  "distichus"        = "#7B3F8A",
+  "dom1"             = "#7C15E6",
+  "dom2"             = "#2E4766",
+  "dom3"             = "#CE0452",
+  "dom4"             = "#B83B15",
+  "favillarum"       = "#FFE684",
+  "east_ignigularis" = "#28C3D1",
+  "west_ignigularis" = "#30C7AB",
+  "marron"           = "#756CA3",
+  "ocior"            = "#D1C5AE",
+  "properus"         = "#BDA425",
+  "ravitergum"       = "#BBDB8B",
+  "sejunctus"        = "#87DB41",
+  "suppar"           = "#DB6E1B",
+  "vinosus"          = "#DB8CA3",
+  "websteri"         = "#000000"
+)
+
+# col_labs <- unique(popmap$taxon)
+col_labs <- c(
+  "aurifer"          = "A. d. aurifer",
+  "biminiensis"      = "A. d. biminiensis",
+  "brevirostris"     = "A. brevirostris",
+  "caudalis"         = "A. caudalis",
+  "dapsilis"         = "A. d. dapsilis",
+  "distichoides"     = "A. d. distichoides",
+  "distichus"        = "A. d. distichus",
+  "dom1"             = "A. d. dominicensis (northwest)",
+  "dom2"             = "A. d. dominicensis (east)",
+  "dom3"             = "A. d. dominicensis (southwest)",
+  "dom4"             = "A. d. dominicensis (west)",
+  "favillarum"       = "A. d. favillarum",
+  "east_ignigularis" = "A. d. ignigularis (east)",
+  "west_ignigularis" = "A. d. ignigularis (west)",
+  "marron"           = "A. marron",
+  "ocior"            = "A. d. ocior",
+  "properus"         = "A. d. properus",
+  "ravitergum"       = "A. d. ravitergum",
+  "sejunctus"        = "A. d. sejunctus",
+  "suppar"           = "A. d. suppar",
+  "vinosus"          = "A. d. vinosus",
+  "websteri"         = "A. websteri"
+)
+
+shp_labs = c(
+    "aurifer"          = "Western A. distichus subspecies",
+    "biminiensis"      = "Bahamian A. distichus subspecies",
+    "brevirostris"     = "A. brevirostris species group",
+    "caudalis"         = "A. brevirostris species group",
+    "dapsilis"         = "Bahamian A. distichus subspecies",
+    "distichoides"     = "Bahamian A. distichus subspecies",
+    "distichus"        = "Bahamian A. distichus subspecies",
+    "dom1"             = "Western A. distichus subspecies",
+    "dom2"             = "Eastern A. distichus subspecies",
+    "dom3"             = "Western A. distichus subspecies",
+    "dom4"             = "Western A. distichus subspecies",
+    "favillarum"       = "Western A. distichus subspecies",
+    "east_ignigularis" = "Eastern A. distichus subspecies",
+    "west_ignigularis" = "Eastern A. distichus subspecies",
+    "marron"           = "A. brevirostris species group",
+    "ocior"            = "Bahamian A. distichus subspecies",
+    "properus"         = "Eastern A. distichus subspecies",
+    "ravitergum"       = "Eastern A. distichus subspecies",
+    "sejunctus"        = "Eastern A. distichus subspecies",
+    "suppar"           = "Western A. distichus subspecies",
+    "vinosus"          = "Western A. distichus subspecies",
+    "websteri"         = "A. brevirostris species group" 
+)
+
+popmap$clade <- shp_labs[popmap$population_post]
+shps <- c(
+    "Western A. distichus subspecies"  = 22,
+    "Bahamian A. distichus subspecies" = 23,
+    "Eastern A. distichus subspecies"  = 21,
+    "A. brevirostris species group"    = 24
+)
+```
+
+## Entire *A. distichus* species group -- 50% complete
+```{r, fig.width = 15, fig.height = 15}
+library(vcfR)
+library(adegenet)
+
+vcf50 <- read.vcfR("/Users/tannermyers/Dropbox/Distichus_Project/brevirostris-ms/data/pop-gen/all_males_y_scaffolds_50miss.vcf.gz")
+
+popmap <- popmap %>% filter(specimen_path %in% colnames(vcf50@gt)[2:ncol(vcf50@gt)])
+
+gen50 <- vcfR2genlight(vcf50)
+popmap$specimen_path == gen50@ind.names
+
+pca50 <- glPca(gen50, center = TRUE, scale = FALSE, nf = 4)
+pve50 <- 100*pca50$eig/sum(pca50$eig)
+pve50
+
+df <- as_tibble(cbind(popmap, as.data.frame(pca50$scores)),
+        col_names = c(colnames(popmap),
+        paste0("PC", 1:(ncol(pca50$scores)-1))))
+
+### PC1 vs PC2
+ggplot(data = df, aes(x = PC1, y = PC2, fill = population_post, label = specimen, shape = clade)) +
+    geom_point(alpha = 0.95, size = 4, color = "black") +
+    scale_fill_manual(values = cols, labels = col_labs,
+        guide = guide_legend(label.theme = element_text(angle = 0, face = "italic"))) +
+    scale_shape_manual(values = shps, labels = shp_labs, name = "Major Clades") +
+    guides(alpha = "none", size = "none",
+        fill  = guide_legend(
+            title = "Taxon",
+            label.theme = element_text(angle = 0, face = "italic"),
+            override.aes = list(shape = 21, size = 4)),
+        shape = guide_legend(
+            title = "Major Clades",
+            override.aes = list(size = 4, fill = "grey50"))) +
+    labs(fill = "Taxon", x = paste0("PC1 (", round(pve50[1], digits = 1), "% of variation)"),
+        y = paste0("PC2 (", round(pve50[2], digits = 1), "% of variation)")) +
+    theme_bw() +
+    theme(panel.border = element_rect(colour = "black", fill = NA, size = 3),
+        axis.title = element_text(colour = "black", family = "Helvetica", size = 16))
+
+### PC2 vs PC3
+ggplot(data = df, aes(x = PC2, y = PC3, fill = population_post, label = specimen, shape = clade)) +
+    geom_point(alpha = 0.95, size = 4, color = "black") +
+    scale_fill_manual(values = cols, labels = col_labs,
+        guide = guide_legend(label.theme = element_text(angle = 0, face = "italic"))) +
+    scale_shape_manual(values = shps, labels = shp_labs, name = "Major Clades") +
+    guides(alpha = "none", size = "none",
+        fill  = guide_legend(
+            title = "Taxon",
+            label.theme = element_text(angle = 0, face = "italic"),
+            override.aes = list(shape = 21, size = 4)),
+        shape = guide_legend(
+            title = "Major Clades",
+            override.aes = list(size = 4, fill = "grey50"))) +
+    labs(fill = "Taxon", x = paste0("PC2 (", round(pve50[2], digits = 1), "% of variation)"),
+        y = paste0("PC3 (", round(pve50[3], digits = 1), "% of variation)")) +
+    theme_bw() +
+    theme(panel.border = element_rect(colour = "black", fill = NA, size = 3),
+        axis.title = element_text(colour = "black", family = "Helvetica", size = 16))
+```
+
+## 75% complete
+```{r, fig.width = 15, fig.height = 15}
+library(grid)
+library(gridExtra)
+
+vcf75 <- read.vcfR("/Users/tannermyers/Dropbox/Distichus_Project/brevirostris-ms/data/pop-gen/all_males_y_scaffolds_25miss.vcf.gz")
+
+popmap <- popmap %>% filter(specimen_path %in% colnames(vcf75@gt)[2:ncol(vcf75@gt)])
+
+gen75 <- vcfR2genlight(vcf75)
+popmap$specimen_path == gen75@ind.names
+
+pca75 <- glPca(gen75, center = TRUE, scale = FALSE, nf = 4)
+pve75 <- 100*pca75$eig/sum(pca75$eig)
+pve75
+
+df <- as_tibble(cbind(popmap, as.data.frame(pca75$scores)),
+        col_names = c(colnames(popmap),
+        paste0("PC", 1:(ncol(pca75$scores)-1))))
+
+### PC1 vs PC2
+ggplot(data = df, aes(x = PC1, y = PC2, fill = population_post, label = specimen, shape = clade)) +
+    geom_point(alpha = 0.95, size = 4, color = "black") +
+    scale_fill_manual(values = cols, labels = col_labs,
+        guide = guide_legend(label.theme = element_text(angle = 0, face = "italic"))) +
+    scale_shape_manual(values = shps, labels = shp_labs, name = "Major Clades") +
+    guides(alpha = "none", size = "none",
+        fill  = guide_legend(
+            title = "Taxon",
+            label.theme = element_text(angle = 0, face = "italic"),
+            override.aes = list(shape = 21, size = 4)),
+        shape = guide_legend(
+            title = "Major Clades",
+            override.aes = list(size = 4, fill = "grey50"))) +
+    labs(fill = "Taxon", x = paste0("PC1 (", round(pve75[1], digits = 1), "% of variation)"),
+        y = paste0("PC2 (", round(pve75[2], digits = 1), "% of variation)")) +
+    theme_bw() +
+    theme(panel.border = element_rect(colour = "black", fill = NA, size = 3),
+        axis.title = element_text(colour = "black", family = "Helvetica", size = 16))
+
+### PC2 vs PC3
+ggplot(data = df, aes(x = PC2, y = PC3, fill = population_post, label = specimen, shape = clade)) +
+    geom_point(alpha = 0.95, size = 4, color = "black") +
+    scale_fill_manual(values = cols, labels = col_labs,
+        guide = guide_legend(label.theme = element_text(angle = 0, face = "italic"))) +
+    scale_shape_manual(values = shps, labels = shp_labs, name = "Major Clades") +
+    guides(alpha = "none", size = "none",
+        fill  = guide_legend(
+            title = "Taxon",
+            label.theme = element_text(angle = 0, face = "italic"),
+            override.aes = list(shape = 21, size = 4)),
+        shape = guide_legend(
+            title = "Major Clades",
+            override.aes = list(size = 4, fill = "grey50"))) +
+    labs(fill = "Taxon", x = paste0("PC2 (", round(pve75[2], digits = 1), "% of variation)"),
+        y = paste0("PC3 (", round(pve75[3], digits = 1), "% of variation)")) +
+    theme_bw() +
+    theme(panel.border = element_rect(colour = "black", fill = NA, size = 3),
+        axis.title = element_text(colour = "black", family = "Helvetica", size = 16))
+```
+
+## Only *A. distichus*
+```{r,  fig.width = 15, fig.height = 15}
+vcf_ad50 <- read.vcfR("/Users/tannermyers/Dropbox/Distichus_Project/brevirostris-ms/data/pop-gen/distichus_males_y_scaffolds_50miss.vcf.gz")
+vcf_ad75 <- read.vcfR("/Users/tannermyers/Dropbox/Distichus_Project/brevirostris-ms/data/pop-gen/distichus_males_y_scaffolds_25miss.vcf.gz") 
+vcf_ad90 <- read.vcfR("/Users/tannermyers/Dropbox/Distichus_Project/brevirostris-ms/data/pop-gen/distichus_males_y_scaffolds_10miss.vcf.gz")
+
+popmap <- popmap %>% filter(specimen_path %in% colnames(vcf_ad50@gt)[2:ncol(vcf_ad50@gt)])
+
+gen_ad50 <- vcfR2genlight(vcf_ad50)
+gen_ad75 <- vcfR2genlight(vcf_ad75)
+gen_ad90 <- vcfR2genlight(vcf_ad90)
+popmap$specimen_path == gen_ad50@ind.names
+
+pca_ad50 <- glPca(gen_ad50, center = TRUE, scale = FALSE, nf = 4)
+pve_ad50 <- 100*pca_ad50$eig/sum(pca_ad50$eig)
+pve_ad50
+
+df <- as_tibble(cbind(popmap, as.data.frame(pca_ad50$scores)),
+        col_names = c(colnames(popmap),
+        paste0("PC", 1:(ncol(pca_ad50$scores)-1))))
+
+### PC1 vs PC2
+pc12 <- ggplot(data = df, aes(x = PC1, y = PC2, fill = population_post, label = specimen, shape = clade)) +
+    geom_point(alpha = 0.95, size = 4, color = "black") +
+    scale_fill_manual(values = cols, labels = col_labs,
+        guide = guide_legend(label.theme = element_text(angle = 0, face = "italic"))) +
+    scale_shape_manual(values = shps, labels = shp_labs, name = "Major Clades") +
+    guides(alpha = "none", size = "none",
+        fill  = guide_legend(
+            title = "Taxon",
+            label.theme = element_text(angle = 0, face = "italic"),
+            override.aes = list(shape = 21, size = 4)),
+        shape = guide_legend(
+            title = "Major Clades",
+            override.aes = list(size = 4, fill = "grey50"))) +
+    labs(fill = "Taxon", x = paste0("PC1 (", round(pve_ad50[1], digits = 1), "% of variation)"),
+        y = paste0("PC2 (", round(pve_ad50[2], digits = 1), "% of variation)")) +
+    theme_bw() +
+    theme(panel.border = element_rect(colour = "black", fill = NA, size = 3),
+        axis.title = element_text(colour = "black", family = "Helvetica", size = 16))
+pc12
+
+### PC2 vs PC3
+pc23 <- ggplot(data = df, aes(x = PC2, y = PC3, fill = population_post, label = specimen, shape = clade)) +
+    geom_point(alpha = 0.95, size = 4, color = "black") +
+    scale_fill_manual(values = cols, labels = col_labs,
+        guide = guide_legend(label.theme = element_text(angle = 0, face = "italic"))) +
+    scale_shape_manual(values = shps, labels = shp_labs, name = "Major Clades") +
+    guides(alpha = "none", size = "none",
+        fill  = guide_legend(
+            title = "Taxon",
+            label.theme = element_text(angle = 0, face = "italic"),
+            override.aes = list(shape = 21, size = 4)),
+        shape = guide_legend(
+            title = "Major Clades",
+            override.aes = list(size = 4, fill = "grey50"))) +
+    labs(fill = "Taxon", x = paste0("PC2 (", round(pve_ad50[2], digits = 1), "% of variation)"),
+        y = paste0("PC3 (", round(pve_ad50[3], digits = 1), "% of variation)")) +
+    theme_bw() +
+    theme(panel.border = element_rect(colour = "black", fill = NA, size = 3),
+        axis.title = element_text(colour = "black", family = "Helvetica", size = 16),
+        legend.position = "none")
+pc23
+
+pc_plt <- grid.arrange(pc12, pc23, ncol = 2, widths = c(6,4))
+plot(pc_plt)
+ggsave("/Users/tannermyers/Dropbox/Apps/Overleaf/distichus_tree/supplemental/supp-figs/y-chromosome-distichus-males-50complete-pca.pdf",
+        pc_plt, dpi = 300, width = 12, height = 6)
+```
+
+## 75% complete
+```{r,  fig.width = 15, fig.height = 15}
+pca_ad75 <- glPca(gen_ad75, center = TRUE, scale = FALSE, nf = 4)
+pve_ad75 <- 100*pca_ad75$eig/sum(pca_ad75$eig)
+pve_ad75
+
+df <- as_tibble(cbind(popmap, as.data.frame(pca_ad75$scores)),
+        col_names = c(colnames(popmap),
+        paste0("PC", 1:(ncol(pca_ad75$scores)-1))))
+
+### PC1 vs PC2
+pc12 <- ggplot(data = df, aes(x = PC1, y = PC2, fill = population_post, label = specimen, shape = clade)) +
+    geom_point(alpha = 0.95, size = 4, color = "black") +
+    scale_fill_manual(values = cols, labels = col_labs,
+        guide = guide_legend(label.theme = element_text(angle = 0, face = "italic"))) +
+    scale_shape_manual(values = shps, labels = shp_labs, name = "Major Clades") +
+    guides(alpha = "none", size = "none",
+        fill  = guide_legend(
+            title = "Taxon",
+            label.theme = element_text(angle = 0, face = "italic"),
+            override.aes = list(shape = 21, size = 4)),
+        shape = guide_legend(
+            title = "Major Clades",
+            override.aes = list(size = 4, fill = "grey50"))) +
+    labs(fill = "Taxon", x = paste0("PC1 (", round(pve_ad75[1], digits = 1), "% of variation)"),
+        y = paste0("PC2 (", round(pve_ad75[2], digits = 1), "% of variation)")) +
+    theme_bw() +
+    theme(panel.border = element_rect(colour = "black", fill = NA, size = 3),
+        axis.title = element_text(colour = "black", family = "Helvetica", size = 16))
+pc12
+
+### PC2 vs PC3
+pc_23 <- ggplot(data = df, aes(x = PC2, y = PC3, fill = population_post, label = specimen, shape = clade)) +
+    geom_point(alpha = 0.95, size = 4, color = "black") +
+    scale_fill_manual(values = cols, labels = col_labs,
+        guide = guide_legend(label.theme = element_text(angle = 0, face = "italic"))) +
+    scale_shape_manual(values = shps, labels = shp_labs, name = "Major Clades") +
+    guides(alpha = "none", size = "none",
+        fill  = guide_legend(
+            title = "Taxon",
+            label.theme = element_text(angle = 0, face = "italic"),
+            override.aes = list(shape = 21, size = 4)),
+        shape = guide_legend(
+            title = "Major Clades",
+            override.aes = list(size = 4, fill = "grey50"))) +
+    labs(fill = "Taxon", x = paste0("PC2 (", round(pve_ad75[2], digits = 1), "% of variation)"),
+        y = paste0("PC3 (", round(pve_ad75[3], digits = 1), "% of variation)")) +
+    theme_bw() +
+    theme(panel.border = element_rect(colour = "black", fill = NA, size = 3),
+        axis.title = element_text(colour = "black", family = "Helvetica", size = 16),
+        legend.position = "none")
+pc23
+
+pc_plt <- grid.arrange(pc12, pc23, ncol = 2, widths = c(6,4))
+plot(pc_plt)
+ggsave("/Users/tannermyers/Dropbox/Apps/Overleaf/distichus_tree/supplemental/supp-figs/y-chromosome-distichus-males-75complete-pca.pdf",
+        pc_plt, dpi = 300, width = 12, height = 6)
+```
+
+## Now 90% complete
+```{r,  fig.width = 15, fig.height = 15}
+pca_ad90 <- glPca(gen_ad90, center = TRUE, scale = FALSE, nf = 4)
+pve_ad90 <- 100*pca_ad90$eig/sum(pca_ad90$eig)
+pve_ad90
+
+df <- as_tibble(cbind(popmap, as.data.frame(pca_ad90$scores)),
+        col_names = c(colnames(popmap),
+        paste0("PC", 1:(ncol(pca_ad90$scores)-1))))
+
+### PC1 vs PC2
+pc12 <- ggplot(data = df, aes(x = PC1, y = PC2, fill = population_post, label = specimen, shape = clade)) +
+    geom_point(alpha = 0.95, size = 4, color = "black") +
+    scale_fill_manual(values = cols, labels = col_labs,
+        guide = guide_legend(label.theme = element_text(angle = 0, face = "italic"))) +
+    scale_shape_manual(values = shps, labels = shp_labs, name = "Major Clades") +
+    guides(alpha = "none", size = "none",
+        fill  = guide_legend(
+            title = "Taxon",
+            label.theme = element_text(angle = 0, face = "italic"),
+            override.aes = list(shape = 21, size = 4)),
+        shape = guide_legend(
+            title = "Major Clades",
+            override.aes = list(size = 4, fill = "grey50"))) +
+    labs(fill = "Taxon", x = paste0("PC1 (", round(pve_ad90[1], digits = 1), "% of variation)"),
+        y = paste0("PC2 (", round(pve_ad90[2], digits = 1), "% of variation)")) +
+    theme_bw() +
+    theme(panel.border = element_rect(colour = "black", fill = NA, size = 3),
+        axis.title = element_text(colour = "black", family = "Helvetica", size = 16))
+pc12
+
+### PC2 vs PC3
+pc23 <- ggplot(data = df, aes(x = PC2, y = PC3, fill = population_post, label = specimen, shape = clade)) +
+    geom_point(alpha = 0.95, size = 4, color = "black") +
+    scale_fill_manual(values = cols, labels = col_labs,
+        guide = guide_legend(label.theme = element_text(angle = 0, face = "italic"))) +
+    scale_shape_manual(values = shps, labels = shp_labs, name = "Major Clades") +
+    guides(alpha = "none", size = "none",
+        fill  = guide_legend(
+            title = "Taxon",
+            label.theme = element_text(angle = 0, face = "italic"),
+            override.aes = list(shape = 21, size = 4)),
+        shape = guide_legend(
+            title = "Major Clades",
+            override.aes = list(size = 4, fill = "grey50"))) +
+    labs(fill = "Taxon", x = paste0("PC2 (", round(pve_ad90[2], digits = 1), "% of variation)"),
+        y = paste0("PC3 (", round(pve_ad90[3], digits = 1), "% of variation)")) +
+    theme_bw() +
+    theme(panel.border = element_rect(colour = "black", fill = NA, size = 3),
+        axis.title = element_text(colour = "black", family = "Helvetica", size = 16),
+        legend.position = "none")
+pc23
+
+pc_plt <- grid.arrange(pc12, pc23, ncol = 2, widths = c(6,4))
+plot(pc_plt)
+ggsave("/Users/tannermyers/Dropbox/Apps/Overleaf/distichus_tree/supplemental/supp-figs/y-chromosome-distichus-males-90complete-pca.pdf",
+        pc_plt, dpi = 300, width = 12, height = 6)        
+```
+
+## Pairwise Fst (50% complete *A. distichus* dataset)
+```{r, fig.width = 8, fig.height = 8}
+library(StAMPP)
+library(reshape2)
+library(viridis)
+
+gen_ad50@pop <- as.factor(popmap$population_post)
+fsts <- stamppFst(gen_ad50, nboots = 100, nclusters = 4, percent = 95)
+str(fsts)
+mat <- fsts$Fsts
+
+### for the figure, use more descriptive names
+new_order <- c("aurifer", "dom3", "suppar", "vinosus", "favillarum", "dom1", "dom4", "ravitergum",
+            "west_ignigularis", "east_ignigularis", "properus", "sejunctus", "dom2",
+            "biminiensis", "dapsilis", "distichoides", "distichus", "ocior"
+            )
+
+new_names <- c("A. d. aurifer", "A. d. dominicensis - SW", "A. d. suppar", "A. d. vinosus",
+    "A. d. favillarum", "A. d. dominicensis - NW", "A. d. dominicensis - W", "A. d. ravitergum", 
+    "A. d. ignigularis - W", "A. d. ignigularis - E",  "A. d. properus", "A. d. sejunctus", "A. d. dominicensis - E",
+    "A. d. biminiensis", "A. d. dapsilis", "A. d. distichoides", "A. d. distichus", "A. d. ocior"
+)
+
+mat[upper.tri(mat)] <- t(mat)[upper.tri(mat)]
+
+mat <- mat[new_order, new_order]
+rownames(mat) <- new_names
+colnames(mat) <- new_names
+
+mat[lower.tri(mat)] <- NA
+### Then plot
+heatmap <- melt(mat)
+ggplot(data = heatmap, aes(x = Var1, y = Var2, fill = value)) + 
+    geom_tile(color = "white") +
+    geom_text(aes(label = round(value, 2), 
+        color = ifelse(value > 0.5, "black", "white"))) +
+    theme_bw() +
+    scale_fill_viridis_c(option = "viridis", na.value = "white", name = bquote(F[ST])) +
+    theme_minimal() +
+    scale_color_identity() +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1, face = "italic"),
+        axis.text.y = element_text(face = "italic"),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        axis.title = element_blank(),
+        legend.position = "bottom")
+ggsave("~/Dropbox/Apps/Overleaf/distichus_tree/supplemental/supp-figs/ychrom-distichus50-fst-heatmap.pdf",
+    width = 8, height = 8, dpi = 300)
+```
+
+## 75% complete *A. distichus* dataset
+```{r, fig.width = 8, fig.height = 8}
+gen_ad75@pop <- as.factor(popmap$population_post)
+fsts <- stamppFst(gen_ad75, nboots = 100, nclusters = 4, percent = 95)
+str(fsts)
+mat <- fsts$Fsts
+
+### for the figure, use more descriptive names
+new_order <- c("aurifer", "dom3", "suppar", "vinosus", "favillarum", "dom1", "dom4", "ravitergum",
+            "west_ignigularis", "east_ignigularis", "properus", "sejunctus", "dom2",
+            "biminiensis", "dapsilis", "distichoides", "distichus", "ocior"
+            )
+
+new_names <- c("A. d. aurifer", "A. d. dominicensis - SW", "A. d. suppar", "A. d. vinosus",
+    "A. d. favillarum", "A. d. dominicensis - NW", "A. d. dominicensis - W", "A. d. ravitergum", 
+    "A. d. ignigularis - W", "A. d. ignigularis - E",  "A. d. properus", "A. d. sejunctus", "A. d. dominicensis - E",
+    "A. d. biminiensis", "A. d. dapsilis", "A. d. distichoides", "A. d. distichus", "A. d. ocior"
+)
+
+mat[upper.tri(mat)] <- t(mat)[upper.tri(mat)]
+
+mat <- mat[new_order, new_order]
+rownames(mat) <- new_names
+colnames(mat) <- new_names
+
+mat[lower.tri(mat)] <- NA
+### Then plot
+heatmap <- melt(mat)
+ggplot(data = heatmap, aes(x = Var1, y = Var2, fill = value)) + 
+    geom_tile(color = "white") +
+    geom_text(aes(label = round(value, 2), 
+        color = ifelse(value > 0.5, "black", "white"))) +
+    theme_bw() +
+    scale_fill_viridis_c(option = "viridis", na.value = "white", name = bquote(F[ST])) +
+    theme_minimal() +
+    scale_color_identity() +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1, face = "italic"),
+        axis.text.y = element_text(face = "italic"),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        axis.title = element_blank(),
+        legend.position = "bottom")
+ggsave("~/Dropbox/Apps/Overleaf/distichus_tree/supplemental/supp-figs/ychrom-distichus75-fst-heatmap.pdf",
+    width = 8, height = 8, dpi = 300)
+```
+
+```{r, fig.width = 8, fig.height = 8}
+gen_ad90@pop <- as.factor(popmap$population_post)
+fsts <- stamppFst(gen_ad90, nboots = 100, nclusters = 4, percent = 95)
+str(fsts)
+mat <- fsts$Fsts
+
+### for the figure, use more descriptive names
+new_order <- c("aurifer", "dom3", "suppar", "vinosus", "favillarum", "dom1", "dom4", "ravitergum",
+            "west_ignigularis", "east_ignigularis", "properus", "sejunctus", "dom2",
+            "biminiensis", "dapsilis", "distichoides", "distichus", "ocior"
+            )
+
+new_names <- c("A. d. aurifer", "A. d. dominicensis - SW", "A. d. suppar", "A. d. vinosus",
+    "A. d. favillarum", "A. d. dominicensis - NW", "A. d. dominicensis - W", "A. d. ravitergum", 
+    "A. d. ignigularis - W", "A. d. ignigularis - E",  "A. d. properus", "A. d. sejunctus", "A. d. dominicensis - E",
+    "A. d. biminiensis", "A. d. dapsilis", "A. d. distichoides", "A. d. distichus", "A. d. ocior"
+)
+
+mat[upper.tri(mat)] <- t(mat)[upper.tri(mat)]
+
+mat <- mat[new_order, new_order]
+rownames(mat) <- new_names
+colnames(mat) <- new_names
+
+mat[lower.tri(mat)] <- NA
+### Then plot
+heatmap <- melt(mat)
+ggplot(data = heatmap, aes(x = Var1, y = Var2, fill = value)) + 
+    geom_tile(color = "white") +
+    geom_text(aes(label = round(value, 2), 
+        color = ifelse(value > 0.5, "black", "white"))) +
+    theme_bw() +
+    scale_fill_viridis_c(option = "viridis", na.value = "white", name = bquote(F[ST])) +
+    theme_minimal() +
+    scale_color_identity() +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1, face = "italic"),
+        axis.text.y = element_text(face = "italic"),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        axis.title = element_blank(),
+        legend.position = "bottom")
+ggsave("~/Dropbox/Apps/Overleaf/distichus_tree/supplemental/supp-figs/ychrom-distichus90-fst-heatmap.pdf",
+    width = 8, height = 8, dpi = 300)
+```
+
+# Phylogeny of the Y
+
+## Make "whitelist" of RAD loci
+```{r, eval = TRUE}
+## check out metadata
+head(vcf_ad50@fix)
+
+## isolate the third column, which contains the name of each locus
+head(vcf_ad50@fix[,3])
+
+## get list of just locus names to use as whitelist for stacks
+loci50 <- sub(":.*", "", vcf_ad50@fix[,3])
+## make sure the locus names look right
+loci50[1:5]
+whitelist <- unique(loci50)
+whitelist
+
+### write out whitelist for stacks
+write.table(whitelist, file = "/Users/tannermyers/Dropbox/Distichus_Project/brevirostris-ms/y-chromosome-analysis/distichus_males_50complete_loci.txt",
+    quote = F, row.names = F, col.names = F)
+
+loci75 <- sub(":.*", "", vcf_ad75@fix[,3])
+## make sure the locus names look right
+loci75[1:5]
+whitelist <- unique(loci75)
+whitelist
+
+### write out whitelist for stacks
+write.table(whitelist, file = "/Users/tannermyers/Dropbox/Distichus_Project/brevirostris-ms/y-chromosome-analysis/distichus_males_75complete_loci.txt",
+    quote = F, row.names = F, col.names = F)
+
+loci90 <- sub(":.*", "", vcf_ad90@fix[,3])
+## make sure the locus names look right
+loci90[1:5]
+whitelist <- unique(loci90)
+whitelist
+
+### write out whitelist for stacks
+write.table(whitelist, file = "/Users/tannermyers/Dropbox/Distichus_Project/brevirostris-ms/y-chromosome-analysis/distichus_males_90complete_loci.txt",
+    quote = F, row.names = F, col.names = F)
+```
+
+## Write phylip-formatted file with concatenated Y chromosome RAD loci
+```{bash, eval=FALSE}
+#! /usr/bin/env bash
+#SBATCH --job-name=brev-stacks
+#SBATCH --nodes=1
+#SBATCH --ntasks-per-node=1
+#SBATCH --cpus-per-task=10
+#SBATCH --partition=jro0014_amd
+#SBATCH --mem=82gb
+#SBATCH --time=48:00:00
+#SBATCH --mail-user=tcm0036@auburn.edu
+#SBATCH --mail-type=FAIL,END
+#SBATCH --error=err.yloci_%j
+#SBATCH --output=out.yloci_%j
+
+LIST=/home/tcm0036/distichus-ddRAD/brevirostris-ms/scripts/bioinformatics/distichus_males_50complete_loci.txt
+CAT_DIR=/scratch/tcm0036/distichus-ddRAD/brevirostris-project/stacks/gstacks/
+
+### Make two column tab-delimited popmap for STACKS (specimen IDs repeated in both columns)
+# awk -v "OFS=\t" '{print $1, $1}' filtered-distichus-males.txt > tmp && mv tmp filtered-distichus-males.txt
+Y_POPMAP=/home/tcm0036/distichus-ddRAD/brevirostris-ms/scripts/bioinformatics/filtered-distichus-males.txt
+OUT_DIR=/scratch/tcm0036/distichus-ddRAD/brevirostris-project/stacks/populations/phylo/y-chromosome
+mkdir -p $OUT_DIR
+
+### Run populations to get full RAD tags for white-listed loci on Y chromosome 
+populations -P $CAT_DIR -M $Y_POPMAP -O $OUT_DIR -W $LIST -t 10 --max-obs-het 0.5 --min-samples-overall 0.5 --phylip-var-all --vcf-all
+```
+
+## Run `IQ-TREE2` to infer phylogeny from concatenated Y chromosome RAD loci
+```{bash,eval=FALSE}
+#! /usr/bin/env bash
+#SBATCH --partition jro0014_amd
+#SBATCH --mem 24G
+#SBATCH --time 24:00:00
+#SBATCH --ntasks 12
+#SBATCH --output out.YconcatTree_%j
+#SBATCH --error err.YconcatTree_%j
+
+source ~/mambaforge/etc/profile.d/conda.sh
+conda activate phyloenv
+
+MSA=/scratch/tcm0036/distichus-ddRAD/brevirostris-project/stacks/populations/phylo/y-chromosome/populations.all.phylip
+# grep -v "^#" $MSA > tmp && mv tmp $MSA
+
+OUT_DIR=/scratch/tcm0036/distichus-ddRAD/brevirostris-project/phylo/iq-tree/y_chromosome
+mkdir -p $OUT_DIR
+
+cd $OUT_DIR
+
+### Run IQ-TREE2
+iqtree -s $MSA -m MFP -B 1000 --alrt 1000 -st DNA -seed 1968 -nt AUTO --prefix y_distichus_50complete
+```
+
+```{r, fig.width = 16, fig.height = 30}
+library(ape)
+library(phangorn)
+library(ggtree)
+library(tidytree)
+library(ggnewscale)
+library(stringr)
+
+popmap <- read_table("/Users/tannermyers/Dropbox/Distichus_Project/brevirostris-ms/sampling-master-detailed.tsv")
+
+popmap$population_post[popmap$population_post == "dom1"] <- "dominicensis_NW"
+popmap$population_post[popmap$population_post == "dom2"] <- "dominicensis_E"
+popmap$population_post[popmap$population_post == "dom3"] <- "dominicensis_SW"
+popmap$population_post[popmap$population_post == "dom4"] <- "dominicensis_W"
+
+
+tree <- read.tree("/Users/tannermyers/Dropbox/Distichus_Project/brevirostris-ms/y-chromosome-analysis/phylo/iqtree/y_distichus_50complete.treefile")
+tree$tip.label <- str_split(tree$tip.label, pattern = "\\.", simplify = T)[,1]
+tree$tip.label %in% popmap$specimen
+
+popmap <- popmap %>% filter(specimen %in% tree$tip.label) %>%
+        arrange(match(specimen, tree$tip.label))
+popmap$specimen == tree$tip.label
+
+tree$tip.label <- paste(sep = "_", popmap$specimen, popmap$population_post, popmap$locality)
+
+plot.phylo(tree)
+
+tree2 <- midpoint(tree)
+plot.phylo(tree2)
+```
+
+```{r, fig.width = 16, fig.height = 30}
+cols <- setNames(c("#DB0CC4", # aurifer
+        "#DBA163", # biminiensis
+        "#662822", # distichoides
+        "#7B3F8A", # distichus
+        "#104728", # dapsilis
+        "#D1C5AE", # ocior
+        "#2E4766", # dom2
+        "#BDA425", # properus
+        "#28C3D1", # east ignigularis
+        "#87DB41", # sejunctus
+        "#BBDB8B", # ravitergum
+        "#30C7AB", # west ignigularis
+        "#7C15E6", # dom1
+        "#B83B15", # dom4
+        "#CE0452", # dom3
+        "#FFE684", # favillarum
+        "#DB6E1B", # suppar
+        "#DB8CA3" # vinosus
+        ),
+        unique(popmap$population_post)
+)
+col_labs <- unique(popmap$population_post)
+
+popmap <- popmap %>% mutate(Color = cols[population_post],
+                             tip_label = paste(specimen, population_post, locality, sep = "_"))
+tip_colors <- popmap %>% select(tip_label, Color) %>% deframe()
+
+# Parse the support values
+parse_support <- function(label) {
+  if (is.na(label) || label == "") return(c(NA, NA))
+    parts <- strsplit(as.character(label), "/")[[1]]
+    shalrt <- as.numeric(parts[1])
+    ufboot <- as.numeric(parts[2])
+    return(c(shalrt, ufboot))
+}
+# Extract UFboot and SH-aLRT values
+support_values <- t(sapply(tree2$node.label, parse_support))
+shalrt <- support_values[, 1]
+ufboot <- support_values[, 2]
+
+# Replace labels with NA where BOTH values exceed thresholds
+tree2$node.label <- ifelse(shalrt >= 80 & ufboot >= 95, 
+                           "supported", 
+                           tree2$node.label)
+
+popmap <- popmap %>% arrange(match(tip_label, tree2$tip.label))
+
+p <- ggtree(tree2) +
+        geom_tiplab(size = 4, family = "Helvetica", offset = 0.0001) +
+        geom_point2(aes(subset = !isTip & label == "supported"),
+                size  = 2,
+                color = "black",
+                shape = 16) + 
+        geom_tippoint(aes(color = label), size = 5) +
+        scale_color_manual(values = tip_colors) +
+        theme(legend.position = "none",
+                axis.line.x = element_blank(),
+                axis.text.x = element_blank(),
+                axis.ticks.x = element_blank()) +
+        hexpand(.3)
+p
+
+ggsave(filename = "~/Dropbox/Apps/Overleaf/distichus_tree/supplemental/supp-figs/y-chromosome-distichus-males-50complete-tree.pdf",
+        limitsize = FALSE, dpi = 300, width = 16, height = 30, units = "in")
+```
+
+# X chromosomes
+
+This BED file contains the coordinates of the scaffolds corresponding the X chromosomes (X1 and X2) in the *A. distichus* genome assembly.
+
+X1:
+```
+scaffold_8      0       51939674
+```
+
+X2:
+```
+scaffold_12     8700001 33619221
+```
+
+## Calculate per-site mean depth for X chromosome scaffolds
+```{bash, eval=FALSE}
+awk '{print $1}' filtered-distichus-males.txt > samples-to-keep.txt
+MALES=samples-to-keep.txt
+X1_BED=/home/tcm0036/distichus-ddRAD/brevirostris-ms/scripts/bioinformatics/x1-chrom-scaffolds.txt
+X2_BED=/home/tcm0036/distichus-ddRAD/brevirostris-ms/scripts/bioinformatics/x2-chrom-scaffolds.txt
+VCF=/scratch/tcm0036/distichus-ddRAD/brevirostris-project/stacks/populations/populations.snps.sorted.vcf.gz
+
+bcftools view -S $MALES --regions-file $X1_BED $VCF | \
+    bcftools query -f '%CHROM\t%POS\t[%DP\t]\n' | \
+    awk '{sum=0; n=0; for(i=3;i<=NF;i++) if($i!=".") {sum+=$i; n++} if(n>0) print $1"\t"$2"\t"sum/n"\t"n}' \
+    > X1-per-site-mean-depth.txt
+
+bcftools view -S $MALES --regions-file $X2_BED $VCF | \
+    bcftools query -f '%CHROM\t%POS\t[%DP\t]\n' | \
+    awk '{sum=0; n=0; for(i=3;i<=NF;i++) if($i!=".") {sum+=$i; n++} if(n>0) print $1"\t"$2"\t"sum/n"\t"n}' \
+    > X2-per-site-mean-depth.txt
+```
+
+```{r}
+x1 <- read_table("/Users/tannermyers/Dropbox/Distichus_Project/brevirostris-ms/y-chromosome-analysis/x-chromosomes/X1-per-site-mean-depth.txt",
+            col_names = c("scaffold", "position", "mean_depth", "sample_size"))
+
+x2 <- read_table("/Users/tannermyers/Dropbox/Distichus_Project/brevirostris-ms/y-chromosome-analysis/x-chromosomes/X2-per-site-mean-depth.txt",
+            col_names = c("scaffold", "position", "mean_depth", "sample_size"))
+
+quantile(x1$mean_depth)
+quantile(x2$mean_depth)
+
+x1_q3 <- quantile(x1$mean_depth, 0.75)
+x2_q3 <- quantile(x2$mean_depth, 0.75)
+
+x1[x1$mean_depth <= x1_q3*3,]
+x2[x2$mean_depth <= x2_q3*3,]
+```
+
+```{bash,eval=FALSE}
+#! /usr/bin/env bash
+#SBATCH --mail-type=FAIL,END
+#SBATCH --mail-user=tcm0036@auburn.edu
+#SBATCH --partition=jro0014_amd
+#SBATCH --mem=32G
+#SBATCH --error=snpfilt_%j.err
+#SBATCH --output=snpfilt_%j.out
+#SBATCH --time=24:00:00
+#SBATCH --job-name=XFilter
+
+## Load conda env with bcftools
+source ~/mambaforge/etc/profile.d/conda.sh
+conda activate genomics_env
+
+VCF=/scratch/tcm0036/distichus-ddRAD/brevirostris-project/stacks/populations/populations.snps.sorted.vcf.gz
+X1_CLEAN=/scratch/tcm0036/distichus-ddRAD/brevirostris-project/bcftools/x1_cleaned_distichus_only.vcf.gz
+X2_CLEAN=/scratch/tcm0036/distichus-ddRAD/brevirostris-project/bcftools/x2_cleaned_distichus_only.vcf.gz
+OUT_DIR=/scratch/tcm0036/distichus-ddRAD/brevirostris-project/bcftools
+X1_BED=/home/tcm0036/distichus-ddRAD/brevirostris-ms/scripts/bioinformatics/x1-chrom-scaffolds.txt
+X2_BED=/home/tcm0036/distichus-ddRAD/brevirostris-ms/scripts/bioinformatics/x2-chrom-scaffolds.txt
+X1_50=${OUT_DIR}/distichus_x1_50miss.vcf.gz
+X1_90=${OUT_DIR}/distichus_x1_10miss.vcf.gz
+X2_50=${OUT_DIR}/distichus_x2_50miss.vcf.gz
+X2_90=${OUT_DIR}/distichus_x2_10miss.vcf.gz
+
+awk '{print $1}' filtered-distichus-males.txt > samples-to-keep.txt
+
+bcftools view -S samples-to-keep.txt --regions-file $X1_BED $VCF | bgzip > $X1_CLEAN
+bcftools index $X1_CLEAN
+
+bcftools view -S samples-to-keep.txt --regions-file $X2_BED $VCF | bgzip > $X2_CLEAN
+bcftools index $X2_CLEAN
+
+### Filter SNPs for depth, completeness (50%), quality, and minor alleles
+bcftools view -e 'FORMAT/DP > 72' $X1_CLEAN | \
+        bcftools view -i 'FORMAT/DP > 5' | \
+        bcftools view -e 'F_MISSING > 0.5' | \
+        bcftools view -m2 -M2 -v snps | \
+        bcftools sort -O z -o $X1_50
+bcftools index $X1_50
+
+### Filter SNPs for depth, completeness (90%), quality, and minor alleles
+bcftools view -e 'FORMAT/DP > 72' $X1_CLEAN | \
+        bcftools view -i 'FORMAT/DP > 5' | \
+        bcftools view -e 'F_MISSING > 0.1' | \
+        bcftools view -m2 -M2 -v snps | \
+        bcftools sort -O z -o $X1_90
+bcftools index $X1_90
+
+### Filter SNPs for depth, completeness (50%), quality, and minor alleles
+bcftools view -e 'FORMAT/DP > 72' $X2_CLEAN | \
+        bcftools view -i 'FORMAT/DP > 5' | \
+        bcftools view -e 'F_MISSING > 0.5' | \
+        bcftools view -m2 -M2 -v snps | \
+        bcftools sort -O z -o $X2_50
+bcftools index $X2_50
+
+### Filter SNPs for depth, completeness (90%), quality, and minor alleles
+bcftools view -e 'FORMAT/DP > 72' $X2_CLEAN | \
+        bcftools view -i 'FORMAT/DP > 5' | \
+        bcftools view -e 'F_MISSING > 0.1' | \
+        bcftools view -m2 -M2 -v snps | \
+        bcftools sort -O z -o $X2_90
+bcftools index $X2_90
+```
+
+No need for physical linkage filtering for the X chromosome scaffolds as we are interested in the overall phylogenetic signal of these linkage groups.
+
+```{r, eval=FALSE}
+library(vcfR)
+
+x1_50 <- read.vcfR("/scratch/tcm0036/distichus-ddRAD/brevirostris-project/bcftools/distichus_x1_50miss.vcf.gz")
+x1_90 <- read.vcfR("/scratch/tcm0036/distichus-ddRAD/brevirostris-project/bcftools/distichus_x1_10miss.vcf.gz")
+x2_50 <- read.vcfR("/scratch/tcm0036/distichus-ddRAD/brevirostris-project/bcftools/distichus_x2_50miss.vcf.gz")
+x2_90 <- read.vcfR("/scratch/tcm0036/distichus-ddRAD/brevirostris-project/bcftools/distichus_x2_10miss.vcf.gz")
+
+## check out metadata
+head(x1_50@fix)
+head(x1_90@fix)
+head(x2_50@fix)
+head(x2_90@fix)
+
+## isolate the third column, which contains the name of each locus
+head(x1_50@fix[,3])
+head(x1_90@fix[,3])
+head(x2_50@fix[,3])
+head(x2_90@fix[,3])
+
+## get list of just locus names to use as whitelist for stacks
+x1_50_loci <- sub(":.*", "", x1_50@fix[,3])
+## make sure the locus names look right
+x1_50_loci[1:5]
+### only 16 unique loci
+x1_90_loci <- sub(":.*", "", x1_90@fix[,3])
+length(unique(x1_90_loci))
+
+x1_whitelist <- unique(x1_50_loci)
+x1_whitelist
+
+x2_50_loci <- sub(":.*", "", x2_50@fix[,3])
+## make sure the locus names look right
+x2_50_loci[1:5]
+### only 9 unique loci
+x2_90_loci <- sub(":.*", "", x2_90@fix[,3])
+length(unique(x2_90_loci))
+
+x2_whitelist <- unique(x2_50_loci)
+x2_whitelist
+
+### write out whitelist for stacks
+write.table(x1_whitelist, file = "/home/tcm0036/distichus-ddRAD/brevirostris-ms/scripts/bioinformatics/distichus_males_x1_50miss_loci.txt",
+    quote = F, row.names = F, col.names = F)
+
+write.table(x2_whitelist, file = "/home/tcm0036/distichus-ddRAD/brevirostris-ms/scripts/bioinformatics/distichus_males_x2_50miss_loci.txt",
+    quote = F, row.names = F, col.names = F)
+```
+
+
+# Visualize concatenated X chromsome ddRAD loci tree
+
+## X1 
+```{r, fig.width = 16, fig.height = 30}
+tree <- read.tree("/Users/tannermyers/Dropbox/Distichus_Project/brevirostris-ms/y-chromosome-analysis/x-chromosomes/iqtree/x1_distichus_50complete.treefile")
+tree$tip.label <- str_split(tree$tip.label, pattern = "\\.", simplify = T)[,1]
+tree$tip.label %in% popmap$specimen
+
+popmap <- popmap %>% filter(specimen %in% tree$tip.label) %>%
+        arrange(match(specimen, tree$tip.label))
+popmap$specimen == tree$tip.label
+
+tree$tip.label <- paste(sep = "_", popmap$specimen, popmap$population_post, popmap$locality)
+
+plot.phylo(tree)
+
+tree2 <- midpoint(tree)
+plot.phylo(tree2)
+
+tip_colors <- popmap %>% select(tip_label, Color) %>% deframe()
+
+# Extract UFboot and SH-aLRT values
+support_values <- t(sapply(tree2$node.label, parse_support))
+shalrt <- support_values[, 1]
+ufboot <- support_values[, 2]
+
+# Replace labels with NA where BOTH values exceed thresholds
+tree2$node.label <- ifelse(shalrt >= 80 & ufboot >= 95, 
+                           "supported", 
+                           tree2$node.label)
+
+popmap <- popmap %>% arrange(match(tip_label, tree2$tip.label))
+
+p <- ggtree(tree2) +
+        geom_tiplab(size = 4, family = "Helvetica", offset = 0.0001) +
+        geom_point2(aes(subset = !isTip & label == "supported"),
+                size  = 2,
+                color = "black",
+                shape = 16) + 
+        geom_tippoint(aes(color = label), size = 5) +
+        scale_color_manual(values = tip_colors) +
+        theme(legend.position = "none",
+                axis.line.x = element_blank(),
+                axis.text.x = element_blank(),
+                axis.ticks.x = element_blank()) +
+        hexpand(.3)
+p
+
+ggsave(filename = "~/Dropbox/Apps/Overleaf/distichus_tree/supplemental/supp-figs/distichus-male-x1-50complete-tree.pdf",
+        limitsize = FALSE, dpi = 300, width = 16, height = 30, units = "in")
+```        
+
+## X2 
+
+```{r, fig.width = 16, fig.height = 30}
+tree <- read.tree("/Users/tannermyers/Dropbox/Distichus_Project/brevirostris-ms/y-chromosome-analysis/x-chromosomes/iqtree/x2_distichus_50complete.treefile")
+tree$tip.label <- str_split(tree$tip.label, pattern = "\\.", simplify = T)[,1]
+tree$tip.label %in% popmap$specimen
+
+popmap <- popmap %>% filter(specimen %in% tree$tip.label) %>%
+        arrange(match(specimen, tree$tip.label))
+popmap$specimen == tree$tip.label
+
+tree$tip.label <- paste(sep = "_", popmap$specimen, popmap$population_post, popmap$locality)
+
+plot.phylo(tree)
+
+tree2 <- midpoint(tree)
+plot.phylo(tree2)
+
+tip_colors <- popmap %>% select(tip_label, Color) %>% deframe()
+
+# Extract UFboot and SH-aLRT values
+support_values <- t(sapply(tree2$node.label, parse_support))
+shalrt <- support_values[, 1]
+ufboot <- support_values[, 2]
+
+# Replace labels with NA where BOTH values exceed thresholds
+tree2$node.label <- ifelse(shalrt >= 80 & ufboot >= 95, 
+                           "supported", 
+                           tree2$node.label)
+
+popmap <- popmap %>% arrange(match(tip_label, tree2$tip.label))
+
+p <- ggtree(tree2) +
+        geom_tiplab(size = 4, family = "Helvetica", offset = 0.0001) +
+        geom_point2(aes(subset = !isTip & label == "supported"),
+                size  = 2,
+                color = "black",
+                shape = 16) + 
+        geom_tippoint(aes(color = label), size = 5) +
+        scale_color_manual(values = tip_colors) +
+        theme(legend.position = "none",
+                axis.line.x = element_blank(),
+                axis.text.x = element_blank(),
+                axis.ticks.x = element_blank()) +
+        hexpand(.3)
+p
+
+ggsave(filename = "~/Dropbox/Apps/Overleaf/distichus_tree/supplemental/supp-figs/distichus-male-x2-50complete-tree.pdf",
+        limitsize = FALSE, dpi = 300, width = 16, height = 30, units = "in")
+``` 
+
+# Autosomal ddRAD tree for comparison
+
+This BED file contains the coordinates of the scaffolds corresponding the sex chromosomes (X1, X2, and Y) in the *A. distichus* genome assembly. 
+```
+scaffold_8      0       51939674
+scaffold_12     0       33619221
+scaffold_13     0       26556177
+scaffold_16     0       15407528
+```
+
+## Filter VCF to obtain loci for whitelist
+```{bash, eval=FALSE}
+#! /usr/bin/env bash
+#SBATCH --mail-type=FAIL,END
+#SBATCH --mail-user=tcm0036@auburn.edu
+#SBATCH --partition=jro0014_amd
+#SBATCH --mem=32G
+#SBATCH --error=snpfilt_%j.err
+#SBATCH --output=snpfilt_%j.out
+#SBATCH --time=24:00:00
+#SBATCH --job-name=autoFilter
+
+## Load conda env with bcftools
+source ~/mambaforge/etc/profile.d/conda.sh
+conda activate genomics_env
+
+VCF=/scratch/tcm0036/distichus-ddRAD/brevirostris-project/stacks/populations/populations.snps.sorted.vcf.gz
+AD_CLEAN=/scratch/tcm0036/distichus-ddRAD/brevirostris-project/bcftools/autosomes_cleaned_distichus_only.vcf.gz
+OUT_DIR=/scratch/tcm0036/distichus-ddRAD/brevirostris-project/bcftools
+SEX_BED=/home/tcm0036/distichus-ddRAD/brevirostris-ms/scripts/bioinformatics/sex-chrom-scaffolds.txt
+AD50=${OUT_DIR}/distichus_males_autosomes_50miss.vcf.gz
+AD90=${OUT_DIR}/distichus_males_autosomes_10miss.vcf.gz
+
+awk '{print $1}' filtered-distichus-males.txt > samples-to-keep.txt
+
+### Drop specimens with >85% missing data in Y dataset
+bcftools view -S samples-to-keep.txt --targets-file ^$SEX_BED $VCF -Oz -o $AD_CLEAN
+bcftools index -t $AD_CLEAN
+
+### Filter SNPs for depth, completeness (50%), quality, and minor alleles
+bcftools view -i 'FORMAT/DP > 5' $AD_CLEAN | \
+        bcftools view -e 'F_MISSING > 0.5' | \
+        bcftools view -m2 -M2 -v snps | \
+        bcftools sort -O z -o $AD50
+bcftools index $AD50
+
+### Filter SNPs for depth, completeness (90%), quality, and minor alleles
+bcftools view -i 'FORMAT/DP > 5' $AD_CLEAN | \
+        bcftools view -e 'F_MISSING > 0.1' | \
+        bcftools view -m2 -M2 -v snps | \
+        bcftools sort -O z -o $AD90
+bcftools index $AD90
+
+### Drop SNPs within 1 kb of each other
+plink --vcf $AD50 --bp-space 1000 --allow-extra-chr --set-missing-var-ids @:# --make-bed --recode vcf --out $OUT_DIR/distichus_males_autosomes_LD_50miss
+plink --vcf $AD90 --bp-space 1000 --allow-extra-chr --set-missing-var-ids @:# --make-bed --recode vcf --out $OUT_DIR/distichus_males_autosomes_LD_10miss
+
+rm samples-to-keep.txt
+```
+
+## Make loci whitelist for autosomal ddRAD loci
+```{r, eval = FALSE}
+library(vcfR)
+
+# vcf90 <- read.vcfR("/scratch/tcm0036/distichus-ddRAD/brevirostris-project/bcftools/distichus_males_autosomes_10miss.vcf.gz")
+vcf90 <- read.vcfR("/scratch/tcm0036/distichus-ddRAD/brevirostris-project/bcftools/distichus_males_autosomes_LD_10miss.vcf")
+## check out metadata
+head(vcf90@fix)
+
+## isolate the third column, which contains the name of each locus
+head(vcf90@fix[,3])
+
+## get list of just locus names to use as whitelist for stacks
+loci90 <- sub(":.*", "", vcf90@fix[,3])
+## make sure the locus names look right
+loci90[1:5]
+whitelist <- unique(loci90)
+whitelist
+
+### write out whitelist for stacks
+write.table(whitelist, file = "/home/tcm0036/distichus-ddRAD/brevirostris-ms/scripts/bioinformatics/distichus_males_autosomes_10miss_loci.txt",
+    quote = F, row.names = F, col.names = F)
+```
+
+## Use `populations` to get full ddRAD loci for whitelist
+```{bash, eval=FALSE}
+#!/usr/bin/env bash
+#SBATCH --job-name=brev-stacks
+#SBATCH --nodes=1
+#SBATCH --ntasks-per-node=1
+#SBATCH --cpus-per-task=10
+#SBATCH --partition=jro0014_amd
+#SBATCH --mem=36gb
+#SBATCH --time=24:00:00
+#SBATCH --mail-user=tcm0036@auburn.edu
+#SBATCH --mail-type=FAIL,END
+#SBATCH --error=err.autloci_%j
+#SBATCH --output=out.autloci_%j
+
+source ~/mambaforge/etc/profile.d/conda.sh
+conda activate genomics_env
+
+Y_POPMAP=/home/tcm0036/distichus-ddRAD/brevirostris-ms/scripts/bioinformatics/filtered-distichus-males.txt
+CAT_DIR=/scratch/tcm0036/distichus-ddRAD/brevirostris-project/stacks/gstacks/
+OUT_DIR=/scratch/tcm0036/distichus-ddRAD/brevirostris-project/stacks/populations/phylo/male-autosomes
+LIST=/home/tcm0036/distichus-ddRAD/brevirostris-ms/scripts/bioinformatics/distichus_males_autosomes_10miss_loci.txt
+
+### Run populations to get full RAD tags for subset of males used for Y chromosome analysis
+populations -P $CAT_DIR -M $Y_POPMAP -O $OUT_DIR -W $LIST -t 10 --max-obs-het 0.5 --min-samples-overall 0.5 --phylip-var-all --vcf-all
+```
+
+## Run IQ-TREE2 to generate a maximum likelihood tree for the concatenated autosomal ddRAD loci
+```{bash, eval=FALSE}
+#! /usr/bin/env bash
+#SBATCH --partition jro0014_amd
+#SBATCH --mem 96G
+#SBATCH --time 4-12:00:00
+#SBATCH --ntasks 12
+#SBATCH --output out.autoconcatTree_%j
+#SBATCH --error err.autoconcatTree_%j
+
+source ~/mambaforge/etc/profile.d/conda.sh
+conda activate phyloenv
+
+MSA=/scratch/tcm0036/distichus-ddRAD/brevirostris-project/stacks/populations/phylo/male-autosomes/populations.all.phylip
+# grep -v "^#" $MSA > tmp && mv tmp $MSA
+
+OUT_DIR=/scratch/tcm0036/distichus-ddRAD/brevirostris-project/phylo/iq-tree/male-autosomes
+mkdir -p $OUT_DIR
+
+cd $OUT_DIR
+
+### Run IQ-TREE2
+iqtree -s $MSA -m MFP -B 1000 --alrt 1000 -st DNA -seed 1968 -nt AUTO --prefix distichus_male_90complete_autosomes
+```
+
+## Visualize concatenated autosomal ddRAD loci tree
+
+```{r, fig.width = 16, fig.height = 30}
+tree <- read.tree("/Users/tannermyers/Dropbox/Distichus_Project/brevirostris-ms/y-chromosome-analysis/male-autosomes-only/iqtree/distichus_male_90complete_autosomes.treefile")
+tree$tip.label <- str_split(tree$tip.label, pattern = "\\.", simplify = T)[,1]
+tree$tip.label %in% popmap$specimen
+
+popmap <- popmap %>% filter(specimen %in% tree$tip.label) %>%
+        arrange(match(specimen, tree$tip.label))
+popmap$specimen == tree$tip.label
+
+tree$tip.label <- paste(sep = "_", popmap$specimen, popmap$population_post, popmap$locality)
+
+plot.phylo(tree)
+
+tree2 <- midpoint(tree)
+plot.phylo(tree2)
+
+tip_colors <- popmap %>% select(tip_label, Color) %>% deframe()
+
+# Extract UFboot and SH-aLRT values
+support_values <- t(sapply(tree2$node.label, parse_support))
+shalrt <- support_values[, 1]
+ufboot <- support_values[, 2]
+
+# Replace labels with NA where BOTH values exceed thresholds
+tree2$node.label <- ifelse(shalrt >= 80 & ufboot >= 95, 
+                           "supported", 
+                           tree2$node.label)
+
+popmap <- popmap %>% arrange(match(tip_label, tree2$tip.label))
+
+p <- ggtree(tree2) +
+        geom_tiplab(size = 4, family = "Helvetica", offset = 0.0001) +
+        geom_point2(aes(subset = !isTip & label == "supported"),
+                size  = 2,
+                color = "black",
+                shape = 16) + 
+        geom_tippoint(aes(color = label), size = 5) +
+        scale_color_manual(values = tip_colors) +
+        theme(legend.position = "none",
+                axis.line.x = element_blank(),
+                axis.text.x = element_blank(),
+                axis.ticks.x = element_blank()) +
+        hexpand(.3)
+p
+
+ggsave(filename = "~/Dropbox/Apps/Overleaf/distichus_tree/supplemental/supp-figs/distichus-male-autosomes-90complete-tree.pdf",
+        limitsize = FALSE, dpi = 300, width = 16, height = 30, units = "in")
+```

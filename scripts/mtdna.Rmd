@@ -1,0 +1,740 @@
+---
+title: "*Anolis distichus* Species Group mtDNA Tree"
+author: "Tanner Myers"
+output:
+    rmdformats::html_clean:
+        highlight: kate
+---
+
+# Download sequences from GenBank and visualize
+```{r, fig.width = 12, fig.height = 12}
+### Load libraries
+library(ape)
+library(rnaturalearth)
+library(tidyverse)
+
+accs <- read_csv("~/Dropbox/Distichus_Project/brevirostris-ms/data/mtdna/REG-ND2-specimens.csv")
+    ### Assign GenBank accessions as sample names when not provided
+    accs$specimen[is.na(accs$specimen)] <- accs$genbank[is.na(accs$specimen)]
+
+unique(accs$species)
+unique(accs$subspecies)
+
+accs$subspecies[na.omit(accs$subspecies == "ignigularis?")] <- "ignigularis"
+accs$subspecies[na.omit(accs$subspecies == "ravitergum?")] <- "ravitergum"
+
+### Visualize sampling distribution
+world <- rnaturalearth::ne_countries(returnclass = "sf", scale = "large")
+
+ggplot() + geom_sf(data = world) +
+    coord_sf(xlim = c(-74.55, -68.25),
+        ylim = c(17.4, 20.2)) +
+    geom_point(data = accs, aes(x = longitude, y = latitude, color = subspecies), size = 3) +
+    theme_classic() + xlab("Longitude") + ylab("Latitude")
+
+### Split dominicensis into east and west nuclear groups based on lat/long
+accs$subspecies[na.omit(accs$longitude < -70.5 & accs$latitude < 19 & accs$subspecies == "dominicensis")] <- "dominicensis_W"
+accs$subspecies[accs$subspecies == "dominicensis"] <- "dominicensis_E"
+
+accs$taxa = paste(accs$species, accs$subspecies, sep = "_")
+
+### Define color scheme for all taxa
+cols <- c(
+  "distichus_aurifer" = "#DB0CC4",
+  "brevirostris_deserticola" = "#3E62C2",
+  "brevirostris_wetmorei" = "#10288C",
+  "caudalis_NA" = "#93BBBD",
+  "distichus_dominicensis_E" = "#2E4766",
+  "distichus_dominicensis_W" = "#B83B15",
+  "distichus_dominicensis/ignigularis" = "#1A7E87",
+  "distichus_favillarum" = "#FFE684",
+  "distichus_ignigularis" = "#28C3D1",
+  "distichus_ravitergum/ignigularis" = "#30C7AB",
+  "marron_NA" = "#756CA3",
+  "distichus_properus" = "#BDA425",
+  "distichus_properus/ignigularis" = "#AEBD25",
+  "distichus_ravitergum" = "#BBDB8B",
+  "distichus_sejunctus" = "#87DB41",
+  "distichus_vinosus" = "#DB8CA3",
+  "websteri_NA" = "#000000"
+)
+
+col_labs <- c(
+  "distichus_aurifer" = "A. d. aurifer",
+  "brevirostris_deserticola" = "A. b. deserticola",
+  "brevirostris_wetmorei" = "A. b. wetmorei",
+  "caudalis_NA" = "A. caudalis",
+  "distichus_dominicensis_E" = "A. d. dominicensis (east)",
+  "distichus_dominicensis_W" = "A. d. dominicensis (west)",
+  "distichus_dominicensis/ignigularis" = "A. d. dominicensis/ignigularis",
+  "distichus_favillarum" = "A. d. favillarum",
+  "distichus_ignigularis" = "A. d. ignigularis",
+  "distichus_ravitergum/ignigularis" = "A. d. ravitergum/ignigularis",
+  "marron_NA" = "A. marron",
+  "distichus_properus" = "A. d. properus",
+  "distichus_properus/ignigularis" = "A. d. properus/ignigularis",
+  "distichus_ravitergum" = "A. d. ravitergum",
+  "distichus_sejunctus" = "A. d. sejunctus",
+  "distichus_vinosus" = "A. d. vinosus",
+  "websteri_NA" = "A. websteri"
+)
+
+shp_labs = c(
+  "distichus_aurifer" = "Western A. distichus subspecies",
+  "brevirostris_deserticola" = "A. brevirostris species group",
+  "brevirostris_wetmorei" = "A. brevirostris species group",
+  "caudalis_NA" = "A. brevirostris species group",
+  "distichus_dominicensis_E" = "Eastern A. distichus subspecies",
+  "distichus_dominicensis_W" = "Western A. distichus subspecies",
+  "distichus_dominicensis/ignigularis" = "Eastern A. distichus subspecies",
+  "distichus_favillarum" = "Western A. distichus subspecies",
+  "distichus_ignigularis" = "Eastern A. distichus subspecies",
+  "distichus_ravitergum/ignigularis" = "Eastern A. distichus subspecies",
+  "marron_NA" = "A. brevirostris species group",
+  "distichus_properus" = "Eastern A. distichus subspecies",
+  "distichus_properus/ignigularis" = "Eastern A. distichus subspecies",
+  "distichus_ravitergum" = "Eastern A. distichus subspecies",
+  "distichus_sejunctus" = "Eastern A. distichus subspecies",
+  "distichus_vinosus" = "Western A. distichus subspecies",
+  "websteri_NA" = "A. brevirostris species group"
+)
+
+accs$clade <- shp_labs[accs$taxa]
+shps <- c(
+    "Western A. distichus subspecies"  = 22,
+    "Eastern A. distichus subspecies"  = 21,
+    "A. brevirostris species group"    = 24
+)
+
+nd2_map <-ggplot() + geom_sf(data = world) +
+    coord_sf(xlim = c(-74.55, -68.25),
+        ylim = c(17.4, 20.2)) +
+    geom_point(data = accs, aes(x = longitude, y = latitude, fill = taxa, shape = clade),
+            size = 4, color = "black", stroke = 0.5, alpha = 0.8, show.legend = TRUE) +
+    scale_fill_manual(values = cols, labels = col_labs, name = "Taxon") +
+    scale_shape_manual(values = shps, labels = shp_labs, name = "Major Clades") +
+    theme_classic() + xlab("Longitude") + ylab("Latitude")  +
+    guides(fill = guide_legend(label.theme = element_text(face = "italic"), override.aes = list(shape = 21, color = "black", stroke = 0.5)),
+            shape = guide_legend(label.theme = element_text(face = "italic"), override.aes = list(fill = "gray50", color = "black", stroke = 0.5)))
+nd2_map
+# ggsave(filename = "/Users/tannermyers/Dropbox/Apps/Overleaf/distichus_tree/supplemental/supp-figs/ND2_sampling_map.png", 
+#        plot = nd2_map, width = 12, height = 9, dpi = 300)
+```
+
+## Use R to download sequences from GenBank and write to FASTA
+```{r, eval = FALSE}
+# nd2s <- read.GenBank(access.nb = accs$genbank, seq.names = accs$specimen, species.names = TRUE)
+nd2_1 <- read.GenBank(access.nb = accs$genbank[1:100], seq.names = accs$specimen[1:100], species.names = TRUE)
+nd2_2 <- read.GenBank(access.nb = accs$genbank[101:200], seq.names = accs$specimen[101:200], species.names = TRUE)
+nd2_3 <- read.GenBank(access.nb = accs$genbank[201:300], seq.names = accs$specimen[201:300], species.names = TRUE)
+nd2_4 <- read.GenBank(access.nb = accs$genbank[301:400], seq.names = accs$specimen[301:400], species.names = TRUE)
+nd2_5 <- read.GenBank(access.nb = accs$genbank[401:500], seq.names = accs$specimen[401:500], species.names = TRUE)
+nd2_6 <- read.GenBank(access.nb = accs$genbank[501:600], seq.names = accs$specimen[501:600], species.names = TRUE)
+nd2_7 <- read.GenBank(access.nb = accs$genbank[601:700], seq.names = accs$specimen[601:700], species.names = TRUE)
+nd2_8 <- read.GenBank(access.nb = accs$genbank[701:800], seq.names = accs$specimen[701:800], species.names = TRUE)
+nd2_9 <- read.GenBank(access.nb = accs$genbank[801:900], seq.names = accs$specimen[801:900], species.names = TRUE)
+nd2_10 <- read.GenBank(access.nb = accs$genbank[901:1080], seq.names = accs$specimen[901:1080], species.names = TRUE)
+dnas <- c(nd2_1, nd2_2, nd2_3, nd2_4, nd2_5, nd2_6, nd2_7, nd2_8, nd2_9, nd2_10)
+
+write.dna(dnas, file = '/Users/tannermyers/Dropbox/Distichus_Project/brevirostris-ms/data/mtdna/distichoid_ND2.fasta', format = 'fasta', nbcol = -1, colsep = "")
+```
+
+# Align sequences & infer ML tree
+
+Using `mafft`, align the ND2 sequences from GenBank
+```{bash, eval = FALSE}
+module load mafft/7.475
+
+mafft --auto distichoid_ND2.fasta > distichoid_ND2_aln.fasta
+```
+
+After alignment, use `iqtree` to infer a maximum likelihood tree
+```{bash, eval = FALSE}
+#! /usr/bin/env bash
+#SBATCH --partition jro0014_amd
+#SBATCH --mem 8G
+#SBATCH --time 4:00:00
+#SBATCH --output out.mtTree
+#SBATCH --error err.mtTree
+
+source ~/mambaforge/etc/profile.d/conda.sh
+conda activate phyloenv
+
+MSA=/home/tcm0036/distichus-ddRAD/brevirostris-ms/mtdna/distichoid_ND2_aln.fasta
+
+iqtree -s $MSA -m MFP -bb 1000 -alrt 1000 -st DNA -seed 2022 -nt AUTO
+```
+
+# Visualize tree
+
+```{r, fig.width = 120, fig.height = 120}
+library(phangorn)
+
+tree <- read.tree("~/Dropbox/Distichus_Project/brevirostris-ms/data/mtdna/iqtree/distichoid_ND2_aln.fasta.treefile")
+tree2 <- midpoint(tree)
+
+accs <- accs[order(match(accs$genbank, tree2$tip.label)),]
+accs$genbank == tree2$tip.label
+
+### assign new tip label
+accs$tip <- paste0(accs$specimen, "_", accs$taxa, "_", accs$locality)
+
+tree2$tip.label <- accs$tip
+### Drop sample shown to be duplicated/mislabelled (same as REG 3998)
+# tree2 <- drop.tip(tree2, "2998_brevirostris_deserticola_323")
+
+plot.phylo(tree2, show.node.label = TRUE)
+```
+
+## Make interpretable figures
+```{r}
+library(ggtree)
+library(tidytree)
+
+unique(accs$taxa)
+cols <- setNames(c(
+            "#2043C2", # brevirostris deserticola
+            "#B83B15", # west dominicensis
+            "#BBDB8B", # ravitergum
+            "#FFE684", # favillarum
+            "#28C3D1", # ignigularis
+            "#79FFBD", # ravitergum/ignigularis
+            "#64A1D1", # dominicensis/ignigularis
+            "#99C463", # ignigularis/properus
+            "#BDA425", # properus
+            "#87DB41", # sejunctus
+            "#DB0CC4", # aurifer
+            "#DB8CA3", # vinosus
+            "#2E4766", # east dominicensis
+            "#000000", # websteri
+            "#93BBBD", # caudalis
+            "#756CA3", # marron
+            "#202A71" # brevirostris wetmorei
+    ),
+        unique(accs$taxa)
+)
+col_labs <- c("A. b. deserticola",  "A. d. dominicensis - West", "A. d. ravitergum", "A. d. favillarum", "A. d. ignigularis", "A. d. ravitergum/ignigularis",
+        "A. d. dominicensis/ignigularis", "A. d. properus/ignigularis", "A. d. properus", "A. d. sejunctus",
+        "A. d. aurifer",  "A. d. vinosus", "A. d. dominicensis - East", "A. websteri",
+        "A. caudalis", "A. marron", "A. b. wetmorei")
+
+accs <- accs %>% mutate(Color = cols[taxa])
+tip_colors <- accs %>% select(tip, Color) %>% deframe()
+
+# Parse the support values
+parse_support <- function(label) {
+  if (is.na(label) || label == "") return(c(NA, NA))
+    parts <- strsplit(as.character(label), "/")[[1]]
+    shalrt <- as.numeric(parts[1])
+    ufboot <- as.numeric(parts[2])
+    return(c(shalrt, ufboot))
+}
+# Extract UFboot and SH-aLRT values
+support_values <- t(sapply(tree2$node.label, parse_support))
+shalrt <- support_values[, 1]
+ufboot <- support_values[, 2]
+
+# Replace labels with NA where BOTH values exceed thresholds
+tree2$node.label <- ifelse(shalrt >= 80 & ufboot >= 95, 
+                           "supported", 
+                           tree2$node.label)
+
+p <- ggtree(tree2) +
+    geom_tiplab(size = 4, family = "Helvetica", offset = 0.0001) +
+    geom_tippoint(aes(color = label), size = 5) +
+    scale_color_manual(values = tip_colors) +
+    geom_point2(aes(subset = !isTip & label == "supported"),
+            size  = 2,
+            color = "black",
+            shape = 16) + # filled circle to replace node labels
+#    geom_nodelab(aes(subset = !isTip),
+        # size = 2,
+        # hjust = -0.2,
+        # color = "gray40") +
+#   geom_text(aes(label = node), size = 2, color = "blue") + # Show node labels for mapping
+    theme(legend.position = "none",
+            axis.line.x = element_blank(),
+            axis.text.x = element_blank(),
+            axis.ticks.x = element_blank()) +
+    hexpand(.3)
+
+viewClade(p, 1886) # favillarum
+    # ggsave("~/Dropbox/Apps/Overleaf/distichus_tree/supplemental/supp-figs/favillarum_subsetted_ND2_tree.png", dpi = 300, width = 12, height = 24)
+viewClade(p, 1720) # west A. d. dominicensis
+    # ggsave("~/Dropbox/Apps/Overleaf/distichus_tree/supplemental/supp-figs/west_dominicensis_subsetted_ND2_tree.png", dpi = 300, width = 12, height = 24)
+viewClade(p, 1717) # Tiburon subspecies
+    # ggsave("~/Dropbox/Apps/Overleaf/distichus_tree/supplemental/supp-figs/tiburon_subsetted_ND2_tree.png", dpi = 300)
+viewClade(p, 1715) # Western A. distichus subspecies
+viewClade(p, 1121) # brevirostris clade
+    # ggsave("~/Dropbox/Apps/Overleaf/distichus_tree/supplemental/supp-figs/brevirostris_subsetted_ND2_tree.png", dpi = 300, width = 12, height = 24)
+viewClade(p, 2000) # East A. d. dominicensis
+    # ggsave("~/Dropbox/Apps/Overleaf/distichus_tree/supplemental/supp-figs/east_dominicensis_subsetted_ND2_tree.png", dpi = 300, width = 12, height = 24)
+viewClade(p, 1126) # ignigularis/ravitergum
+    # ggsave("~/Dropbox/Apps/Overleaf/distichus_tree/supplemental/supp-figs/ignigularis_ravitergum_subsetted_ND2_tree.png", dpi = 300, width = 12, height = 24)
+viewClade(p, 1443) # ignigularis/properus
+    # ggsave("~/Dropbox/Apps/Overleaf/distichus_tree/supplemental/supp-figs/ignigularis_properus_subsetted_ND2_tree.png", dpi = 300, width = 14, height = 30)
+viewClade(p, 1707) # properus/sejunctus
+    # ggsave("~/Dropbox/Apps/Overleaf/distichus_tree/supplemental/supp-figs/properus_sejunctus_subsetted_ND2_tree.png", dpi = 300, width = 12, height = 24)
+```
+
+## Collapse nodes to visualize relationships among major clades
+```{r}
+library(ggnewscale)
+
+clade_info <- tibble(
+        node  = c(1886, 1720, 2159, 1121,
+                2000, 1126, 1443, 1707),
+        label = c("A. d. favillarum", "A. d. dominicensis - W", "A. d. aurifer & A. d. vinosus", "A. brevirostris complex",
+            "A. d. dominicensis - E", "A. d. ignigularis/ravitergum", "A. d. ignigularis/properus", "A. d. properus/sejunctus"),  # clade names
+  fill  = cols[c("distichus_favillarum", "distichus_dominicensis_W", "distichus_aurifer", "brevirostris_deserticola",
+            "distichus_dominicensis_E", "distichus_ravitergum/ignigularis", "distichus_properus/ignigularis", "distichus_sejunctus")]  # matched colors
+)
+
+# Collapse all clades iteratively
+p_collapsed <- ggtree(tree2, branch.length = "none")
+
+for (i in seq_len(nrow(clade_info))) {
+  p_collapsed <- collapse(p_collapsed,
+                           node  = clade_info$node[i],
+                           mode  = "mixed",
+                           fill  = clade_info$fill[i],
+                           alpha = 0.8)
+}
+
+# # Uncollapsed taxa info
+# uncollapsed_info <- tibble(
+#   node  = c(1050, 1053, 2136, 631),  # replace with actual node numbers
+#   label = c("A. websteri", "A. marron", "A. caudalis", "A. d. vinosus"),
+#   fill  = cols[c("websteri_NA", "marron_NA", "caudalis_NA", "distichus_vinosus")] 
+# )
+
+# Add clade labels and bootstrap support on remaining nodes
+p_collapsed +
+        geom_tippoint(aes(color = label), size = 2) +
+        geom_point2(aes(subset = !isTip & label == "supported"),
+            size  = 2,
+            color = "black",
+            shape = 16) + # filled circle
+        # geom_tiplab(aes(color = label),
+        #         size = 2,
+        #         offset = 0.1,
+        #         fontface = "italic") +
+        scale_color_manual(values = tip_colors) +
+        new_scale_color() +
+        geom_cladelab(data = clade_info,
+                mapping = aes(node = node,
+                        label = label,
+                        color = fill),
+                        fontsize = 5,
+                        fontface = "italic",
+                        offset = 0.05,
+                        offset.text = 0.1,
+                        align = TRUE,
+                        barsize = 0.5) +
+        # geom_cladelab(data = uncollapsed_info,
+        #         mapping = aes(node = node,
+        #         label = label,
+        #         color = fill),
+        #         fontsize = 5,
+        #         fontface = "italic",
+        #         offset = 0.05,
+        #         offset.text = 0.1,
+        #         align = FALSE,
+        #         barsize = 0,
+        #         barcolour = NA) +
+        scale_color_identity() +
+        # geom_nodelab(aes(subset = !isTip),
+        #         size = 2,
+        #         hjust = -0.2,
+        #         color = "gray40") +
+        theme_tree() +
+        theme(legend.position = "none") +
+        hexpand(.8)
+
+# ggsave("~/Dropbox/Apps/Overleaf/distichus_tree/supplemental/supp-figs/ND2-tree-entire-sampling-collapsed-clades.png",
+#    dpi = 300, height = 15, width = 15)
+```
+
+# Subset to only include samples with ddRAD data
+```{r}
+samp_df <- read_table("/Users/tannermyers/Dropbox/Distichus_Project/brevirostris-ms/sampling-master-detailed.tsv")
+samp_df_mt <- samp_df[samp_df$mt_genbank != "#N/A",]
+unique(samp_df_mt$taxon)
+
+### these accessions don't have ddRAD data, but are from populations that do
+just_mt <- accs %>% filter(subspecies %in% c("aurifer", "vinosus") | species %in% c("websteri", "caudalis", "marron")) %>% select(genbank)
+
+mt_samples <- c(samp_df_mt$specimen, accs$specimen[accs$genbank %in% just_mt$genbank])
+
+mt_tips <- tree2$tip.label %>% str_split_fixed("_", n = 2) %>% .[,1]
+keepers <- mt_tips %in% mt_samples
+
+kept_tips <- tree2$tip.label[keepers]
+tree2_RAD <- keep.tip(tree2, kept_tips)
+
+plot.phylo(tree2_RAD, show.node.label = TRUE)
+```
+
+## If re-inferring tree with reduced sampling
+```{r, eval = FALSE}
+################################################################################
+### load aligned ND2 sequence with all specimens
+nd2 <- read.FASTA("~/Dropbox/Distichus_Project/brevirostris-ms/data/mtdna/distichoid_ND2_aln.fasta", type = "DNA")
+### subset to include selections 
+nd2 <- nd2[names(nd2) %in% c(samp_df_mt$mt_genbank, just_mt$genbank)]
+
+### change the names from GenBank accessions to more informative names
+for (i in 1:length(names(nd2))){
+    if (names(nd2)[i] %in% samp_df_mt$mt_genbank){
+        names(nd2)[i] <- paste0(samp_df_mt$specimen[samp_df_mt$mt_genbank == names(nd2)[i]], "_", samp_df_mt$taxon[samp_df_mt$mt_genbank == names(nd2)[i]])
+    } else {
+        if (accs$species[accs$genbank == names(nd2)[i]] == "distichus") {
+            names(nd2)[i] <- paste0(accs$specimen[accs$genbank == names(nd2)[i]], "_", accs$subspecies[accs$genbank == names(nd2)[i]])    
+        } else {
+        names(nd2)[i] <- paste0(accs$specimen[accs$genbank == names(nd2)[i]], "_", accs$species[accs$genbank == names(nd2)[i]])
+        }
+    }
+}
+
+write.dna(nd2, file = '/Users/tannermyers/Dropbox/Distichus_Project/brevirostris-ms/data/mtdna/select_ND2_aln.fa', format = 'fasta', nbcol = -1, colsep = "")
+```
+
+## Subsetted tree -- visualize
+```{r, fig.width = 30, fig.height = 30}
+### If using tree inferred with reduced samples, read in that tree
+# tree <- read.tree("~/Dropbox/Distichus_Project/brevirostris-ms/data/mtdna/iqtree/select_ND2_aln.fa.treefile")
+# tree2 <- midpoint(tree)
+
+tip_labs = tree2_RAD$tip.label %>% str_split_fixed("_", n = 2)
+samples = tip_labs[,1]
+taxa <- samp_df$population_post[match(samples, samp_df$specimen)]
+
+df <- data.frame(samples, taxa)
+df$taxa[df$samples == "LM1192"] <- "vinosus"
+df$taxa[df$samples == "LM1147"] <- "aurifer"
+df$taxa[df$samples == "LM1145"] <- "aurifer"
+df$taxa[df$samples == "LM1146"] <- "aurifer"
+df$taxa[df$samples == "LM1148"] <- "aurifer"
+df$taxa[df$samples == "AY296205.1"] <- "websteri"
+df$taxa[df$samples == "SBH269255"] <- "caudalis"
+df$taxa[df$samples == "AY296161.1"] <- "caudalis"
+df$taxa[df$samples == "AY296187.1"] <- "marron"
+
+df$taxa[df$taxa == "dom2"] <- "east_dominicensis"
+df$taxa[df$taxa == "dom4"] <- "west_dominicensis"
+
+cols <- setNames(c(
+        "#202AC2", # brevirostris
+        "#30C7AB", # west ignigularis
+        "#BBDB8B", # ravitergum
+        "#28C3D1", # east ignigularis
+        "#BDA425", # properus
+        "#87DB41", # sejunctus
+        "#DB0CC4", # aurifer
+        "#DB8CA3", # vinosus
+        "#B83B15", # dominicensis W
+        "#FFE684", # favillarum
+        "#2E4766", # dominicensis E
+        "#000000", # websteri
+        "#93BBBD", # caudalis
+        "#756CA3" # marron
+        ),
+        unique(df$taxa)
+)
+col_labs <- unique(df$taxa)
+
+df$samples == tree2_RAD$tip.label %>% str_split_fixed("_", n = 2)
+tree2_RAD$taxon <- df$taxa
+tree2_RAD$tip.color = cols[tree2_RAD$taxon]
+
+cbind(tree2_RAD$tip.label, paste(sep = "_", df$samples, df$taxa))
+tree2_RAD$tip.label <- paste(sep = "_", df$samples, df$taxa)
+
+### sanity check
+plot.phylo(tree2_RAD)
+tiplabels(pch = 16, col = tree2_RAD$tip.color, cex = 1.5)
+```
+
+## Make figure
+```{r, fig.width = 16, fig.height = 16}
+df <- df %>% mutate(Color = cols[taxa], tip_label = paste(samples, taxa, sep = "_"))
+tip_colors <- df %>% select(tip_label, Color) %>% deframe()
+
+### Unnecessary here if pruning tree
+# # Extract UFboot and SH-aLRT values
+# support_values <- t(sapply(tree2_RAD$node.label, parse_support))
+# shalrt <- support_values[, 1]
+# ufboot <- support_values[, 2]
+
+# # Replace labels with NA where BOTH values exceed thresholds
+# tree2_RAD$node.label <- ifelse(shalrt >= 80 & ufboot >= 95, 
+#                            "supported", 
+#                            tree2_RAD$node.label)
+
+mt_tree <- ggtree(tree2_RAD) +
+        geom_tiplab(size = 4, family = "Helvetica", offset = 0.003) +
+        geom_point2(aes(subset = !isTip & label == "supported"),
+            size  = 2,
+            color = "black",
+            shape = 16) + # filled circle
+        geom_tippoint(aes(color = label), size = 5) +
+        scale_color_manual(values = tip_colors) +
+        # geom_nodelab(aes(subset = !isTip),
+        # size = 2,
+        # hjust = -0.2,
+        # color = "gray40") +
+        theme(legend.position = "none",
+            axis.line.x = element_blank(),
+            axis.text.x = element_blank(),
+            axis.ticks.x = element_blank()) +
+        hexpand(.3)
+mt_tree
+
+# ggsave("~/Dropbox/Distichus_Project/brevirostris-ms/figures/ND2_tree_subsetted_to_ddRAD_samples.pdf", plot = mt_tree, width = 12, height = 16, dpi = 300)
+
+group_list_mt <- setNames(
+  lapply(unique(df$taxa), function(pop) {
+    df$tip_label[df$taxa == pop]
+  }),
+  unique(df$taxa)
+)
+
+branch_colors_mt <- c(
+  "0" = "black",
+  setNames(
+    sapply(unique(df$taxa), function(pop) {
+      df$Color[df$taxa == pop][1]
+    }),
+    unique(df$taxa)
+  )
+)
+
+group_list_mt$brevirostris <- group_list_mt$brevirostris[group_list_mt$brevirostris != "4320_brevirostris"]
+group_list_mt$brevirostris_2 <- "4320_brevirostris"
+
+branch_colors_mt["brevirostris_2"] <- "#202AC2"
+
+### mirror tree to compare to ddRAD tree
+mt_tree_mir <- ggtree(groupOTU(tree2_RAD, group_list_mt, 
+                                group_name = "population",
+                                overlap = "abandon"),
+                      aes(color = population),
+                      linewidth = 0.8) +
+  scale_color_manual(values = branch_colors_mt) +
+  geom_point2(aes(subset = !isTip & label == "supported"),
+              size  = 2,
+              color = "black",
+              shape = 16) +
+  theme(legend.position = "none",
+        axis.line.x     = element_blank(),
+        axis.text.x     = element_blank(),
+        axis.ticks.x    = element_blank()) +
+  scale_x_reverse() +
+  hexpand(0.1, direction = -1)
+mt_tree_mir
+```
+
+## Read in concatenated ddRAD tree and compare to mtDNA tree
+```{r, fig.width = 16, fig.height = 16}
+rad_tree <- read.tree("/Users/tannermyers/Dropbox/Distichus_Project/brevirostris-ms/phylo/iqtree-concat/concat_miss90LD.treefile")
+rad_tree$tip.label <- str_split(rad_tree$tip.label, pattern = "\\.", simplify = T)[,1]
+rad_tree$tip.label %in% samp_df$specimen
+
+samp_df$population_post[samp_df$population_post == "dom2"] <- "east_dominicensis"
+samp_df$population_post[samp_df$population_post == "dom4"] <- "west_dominicensis"
+
+samp_df <- samp_df[match(rad_tree$tip.label, samp_df$specimen),]
+rad_tree$tip.label <- paste(rad_tree$tip.label, samp_df$population_post, sep = "_")
+
+rad_tree2 <- midpoint(rad_tree)
+plot(rad_tree2, show.node.label = TRUE)
+
+rad_w_mt <- samp_df %>% filter(specimen %in% df$samples) %>% select(specimen, population_post)
+### grab taxa with ND2 representatives but no ddRAD data, but are from populations that do have ddRAD data
+rad_wo_mt <- samp_df %>% filter(population_post %in% c("aurifer", "vinosus", "websteri", "caudalis", "marron")) %>% select(specimen, population_post)
+
+rad_samples <- as_tibble(rbind(rad_w_mt, rad_wo_mt))
+keepers <- paste(rad_samples$specimen, rad_samples$population_post, sep = "_")
+
+rad_tree2 <- keep.tip(rad_tree2, keepers)
+
+rad_samples <- rad_samples[match(rad_tree2$tip.label, paste(rad_samples$specimen, rad_samples$population_post, sep = "_")),]
+rad_tree2$taxon <- rad_samples$population_post
+
+cols <- setNames(c("#DB0CC4", # aurifer
+        "#2E4766", # dom2
+        "#202AC2", # brevirostris
+        "#93BBBD", # caudalis
+        "#756CA3", # marron
+        "#000000", # websteri
+        "#BBDB8B", # ravitergum
+        "#30C7AB", # west ignigularis
+        "#28C3D1", # east ignigularis
+        "#BDA425", # properus
+        "#87DB41", # sejunctus
+        "#B83B15", # dom4
+        "#FFE684", # favillarum
+        "#DB8CA3" # vinosus
+        ),
+        unique(rad_samples$population_post)
+)
+col_labs <- unique(rad_samples$population_post)
+
+rad_samples <- rad_samples %>% mutate(Color = cols[population_post],
+                             tip_label = paste(specimen, population_post, sep = "_"))
+tip_colors <- rad_samples %>% select(tip_label, Color) %>% deframe()
+
+plot.phylo(rad_tree2)
+tiplabels(pch = 16, col = tip_colors)
+```
+
+## Make figure
+```{r, fig.width = 24, fig.height = 20}
+# Extract UFboot and SH-aLRT values
+support_values <- t(sapply(rad_tree2$node.label, parse_support))
+shalrt <- support_values[, 1]
+ufboot <- support_values[, 2]
+
+# Replace labels with NA where BOTH values exceed thresholds
+rad_tree2$node.label <- ifelse(shalrt >= 80 & ufboot >= 95, 
+                           "supported", 
+                           rad_tree2$node.label)
+
+ddrad_tree <- ggtree(rad_tree2) +
+        geom_tiplab(size = 4, family = "Helvetica", offset = 0.0001) +
+        geom_point2(aes(subset = !isTip & label == "supported"),
+                size  = 2,
+                color = "black",
+                shape = 16) + # filled circle
+        geom_tippoint(aes(color = label), size = 5) +
+        scale_color_manual(values = tip_colors) +
+        theme(legend.position = "none",
+                axis.line.x = element_blank(),
+                axis.text.x = element_blank(),
+                axis.ticks.x = element_blank())
+ddrad_tree
+
+ddrad_tree + geom_text(aes(label = node), size = 2, color = "red", hjust = -0.3)
+ddrad_flipped <- flip(ddrad_tree, node1 = 201, node2 = 124) |>
+                 flip(node1 = 171, node2 = 125) |>
+                 flip(node1 = 147, node2 = 127) |>
+                 flip(node1 = 128, node2 = 135) |>
+                 flip(node1 = 119, node2 = 120) |>
+                 flip(node1 = 129, node2 = 132)
+
+
+ddrad_flipped <- ddrad_flipped + hexpand(0.4)
+
+# ggsave("~/Dropbox/Distichus_Project/brevirostris-ms/figures/ddRAD_tree_subsetted_to_ND2_samples.pdf",
+#    plot = ddrad_flipped, width = 12, height = 16, dpi = 300)
+
+### Make tree without tip labels but with clade labels
+clade_data <- data.frame(
+  node = c(
+    getMRCA(rad_tree2, rad_samples$tip_label[rad_samples$population_post == "aurifer"]),
+    getMRCA(rad_tree2, rad_samples$tip_label[rad_samples$population_post == "east_dominicensis"]),
+    getMRCA(rad_tree2, rad_samples$tip_label[rad_samples$population_post == "brevirostris"]),
+    getMRCA(rad_tree2, rad_samples$tip_label[rad_samples$population_post == "caudalis"]),
+    getMRCA(rad_tree2, rad_samples$tip_label[rad_samples$population_post == "marron"]),
+    getMRCA(rad_tree2, rad_samples$tip_label[rad_samples$population_post == "websteri"]),
+    getMRCA(rad_tree2, rad_samples$tip_label[rad_samples$population_post == "ravitergum"]),
+    getMRCA(rad_tree2, rad_samples$tip_label[rad_samples$population_post == "west_ignigularis"]),
+    getMRCA(rad_tree2, rad_samples$tip_label[rad_samples$population_post == "east_ignigularis"]),
+    getMRCA(rad_tree2, rad_samples$tip_label[rad_samples$population_post == "properus"]),
+    getMRCA(rad_tree2, rad_samples$tip_label[rad_samples$population_post == "sejunctus"]),
+    getMRCA(rad_tree2, rad_samples$tip_label[rad_samples$population_post == "west_dominicensis"]),
+    getMRCA(rad_tree2, rad_samples$tip_label[rad_samples$population_post == "favillarum"]),
+    getMRCA(rad_tree2, rad_samples$tip_label[rad_samples$population_post == "vinosus"])
+  ),
+  species = c(
+    "A. d. aurifer", "A. d. dominicensis - E", "A. brevirostris", "A. caudalis",
+    "A. marron", "A. websteri", "A. d. ravitergum", "A. d. ignigularis - W",
+    "A. d. ignigularis - E", "A. d. properus", "A. d. sejunctus",
+    "A. d. dominicensis - W", "A. d. favillarum", "A. d. vinosus"
+  ),
+  sp_col = c(
+    rad_samples$Color[rad_samples$population_post == "aurifer"][1],
+    rad_samples$Color[rad_samples$population_post == "east_dominicensis"][1],
+    rad_samples$Color[rad_samples$population_post == "brevirostris"][1],
+    rad_samples$Color[rad_samples$population_post == "caudalis"][1],
+    rad_samples$Color[rad_samples$population_post == "marron"][1],
+    rad_samples$Color[rad_samples$population_post == "websteri"][1],
+    rad_samples$Color[rad_samples$population_post == "ravitergum"][1],
+    rad_samples$Color[rad_samples$population_post == "west_ignigularis"][1],
+    rad_samples$Color[rad_samples$population_post == "east_ignigularis"][1],
+    rad_samples$Color[rad_samples$population_post == "properus"][1],
+    rad_samples$Color[rad_samples$population_post == "sejunctus"][1],
+    rad_samples$Color[rad_samples$population_post == "west_dominicensis"][1],
+    rad_samples$Color[rad_samples$population_post == "favillarum"][1],
+    rad_samples$Color[rad_samples$population_post == "vinosus"][1]
+  )
+)
+
+group_list <- setNames(
+      lapply(unique(rad_samples$population_post), function(pop) {
+        rad_samples$tip_label[rad_samples$population_post == pop]
+      }),
+      clade_data$species
+    )
+branch_colors <- c(
+  "0" = "black",
+  setNames(
+    sapply(unique(rad_samples$population_post), function(pop) {
+      rad_samples$Color[rad_samples$population_post == pop][1]
+    }),
+    clade_data$species  # must match the names in group_list
+  )
+)
+
+rad_tree_flipped <- ggtree(groupOTU(rad_tree2, group_list, group_name = "population"),
+            linewidth = 0.8) |>
+        flip(node1 = 201, node2 = 124) |>
+        flip(node1 = 171, node2 = 125) |>
+        flip(node1 = 147, node2 = 127) |>
+        flip(node1 = 128, node2 = 135) |>
+        flip(node1 = 119, node2 = 120) |>
+        flip(node1 = 129, node2 = 132)
+
+
+rad_tree_fig <- rad_tree_flipped +
+    aes(color = population) +
+    scale_color_manual(values = branch_colors) +
+    # geom_hilight(data    = clade_data,
+    #             mapping = aes(node = node, fill = sp_col),
+    #             alpha   = 0.6) +
+    scale_fill_identity() +
+    new_scale_color() +
+    geom_cladelab(data = clade_data,
+                    fontface = "italic", fontsize = 6,
+                    mapping = aes(node = node, label = species, color = sp_col)) +
+    scale_color_identity() +
+    geom_point2(aes(subset = !isTip & label == "supported"),
+                size  = 2,
+                color = "black",
+                shape = 16) +
+    theme(legend.position = "none",
+            plot.margin     = margin(10, 100, 10, 10)) +
+    coord_cartesian(clip = "off")
+rad_tree_fig
+```
+
+```{r, fig.width = 24, fig.height = 16}
+library(cowplot)
+
+depth_mit <- max(node.depth.edgelength(tree2_RAD))
+mt_tree_plt <- mt_tree_mir +
+  scale_x_reverse(limits = c(depth_mit * 1.05, -depth_mit * 0.35)) +
+  coord_cartesian(clip = "off")
+
+plot_grid(rad_tree_fig, mt_tree_plt,
+          ncol = 2, align = "h",
+          label_size = 10)
+
+# ggsave("~/Dropbox/Distichus_Project/brevirostris-ms/figures/ddRAD_mtDNA_trees_side_by_side.pdf",
+#    width = 24, height = 16, dpi = 300)
+```
+
+
+```{r}
+sessionInfo()
+```

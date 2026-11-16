@@ -205,7 +205,7 @@ echo "SRR24030173.aligned.sorted" >> keepers.txt
 
 bcftools view -S keepers.txt $VCF | \
       bcftools filter -i 'FORMAT/DP > 5' | \
-      bcftools filter -e 'F_MISSING > 0.9' | \
+      bcftools filter -e 'F_MISSING > 0.1' | \
       bcftools view -m2 -M2 -v snps |\
       bcftools sort -O z -o $OUT_VCF
 bcftools index $OUT_VCF
